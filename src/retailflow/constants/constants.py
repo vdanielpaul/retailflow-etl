@@ -1,0 +1,53 @@
+"""Global application constants, enums, and error code definitions for RetailFlow ETL."""
+
+from enum import Enum
+
+
+class PipelineStatus(str, Enum):
+    """Execution status values for pipeline runs."""
+
+    RUNNING = "RUNNING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
+
+
+class ExecutionStage(str, Enum):
+    """Pipeline execution stages for progress and error tracking."""
+
+    INITIALIZATION = "INITIALIZATION"
+    CONFIGURATION_LOADING = "CONFIGURATION_LOADING"
+    FILE_DISCOVERY = "FILE_DISCOVERY"
+    FILE_VALIDATION = "FILE_VALIDATION"
+    SCHEMA_VALIDATION = "SCHEMA_VALIDATION"
+    ROW_VALIDATION = "ROW_VALIDATION"
+    TRANSFORMATION = "TRANSFORMATION"
+    DIMENSION_LOADING = "DIMENSION_LOADING"
+    FACT_LOADING = "FACT_LOADING"
+    WATERMARK_UPDATE = "WATERMARK_UPDATE"
+    AUDIT_LOGGING = "AUDIT_LOGGING"
+    ARCHIVAL = "ARCHIVAL"
+    COMPLETED = "COMPLETED"
+
+
+class ErrorCode(str, Enum):
+    """Standardized error codes for logging and bad record auditing."""
+
+    ERR_CONFIG_INVALID = "ERR_CONFIG_INVALID"
+    ERR_FILE_NOT_FOUND = "ERR_FILE_NOT_FOUND"
+    ERR_HEADER_MISMATCH = "ERR_HEADER_MISMATCH"
+    VAL_NULL_PRIMARY_KEY = "VAL_NULL_PRIMARY_KEY"
+    VAL_INVALID_DATATYPE = "VAL_INVALID_DATATYPE"
+    VAL_NEG_QUANTITY = "VAL_NEG_QUANTITY"
+    VAL_NEG_PRICE = "VAL_NEG_PRICE"
+    VAL_FUTURE_TIMESTAMP = "VAL_FUTURE_TIMESTAMP"
+    VAL_INVALID_EMAIL = "VAL_INVALID_EMAIL"
+    VAL_FK_NOT_FOUND = "VAL_FK_NOT_FOUND"
+    ERR_DB_CONNECTION = "ERR_DB_CONNECTION"
+    ERR_DB_EXECUTION = "ERR_DB_EXECUTION"
+
+
+DEFAULT_APP_NAME = "retailflow-etl"
+DEFAULT_CONFIG_PATH = "config/base.yaml"
+DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_BATCH_SIZE = 10000

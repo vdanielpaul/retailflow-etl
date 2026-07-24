@@ -1,0 +1,15 @@
+# Production Environment Configuration Overrides
+
+pipeline:
+  environment: "production"
+  batch_size: 50000
+  stop_on_error: false
+  max_error_percentage: 2.0
+
+database:
+  connection_timeout: 60
+
+logging:
+  level: "WARNING"
+  console_output: false
+  file_output: true

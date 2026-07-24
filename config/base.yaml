@@ -1,0 +1,46 @@
+# Base Configuration Defaults for RetailFlow ETL Pipeline
+
+pipeline:
+  name: "retailflow-etl"
+  version: "0.1.0"
+  batch_size: 10000
+  stop_on_error: false
+  max_error_percentage: 5.0
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "retailflow_dw"
+  user: "retailflow_user"
+  password: "env_var:POSTGRES_PASSWORD"
+  schema: "public"
+  connection_timeout: 30
+
+paths:
+  sample_dir: "data/sample"
+  raw_dir: "data/raw"
+  staging_dir: "data/staging"
+  processed_dir: "data/processed"
+  archive_dir: "data/archive"
+  bad_records_dir: "data/bad_records"
+  log_dir: "logs"
+  sql_dir: "sql"
+
+logging:
+  level: "INFO"
+  console_output: true
+  file_output: true
+  log_filename: "retailflow_etl.log"
+  max_bytes: 10485760
+  backup_count: 5
+
+validation:
+  allow_missing_optional_columns: false
+  quarantine_bad_records: true
+  reject_future_dates: true
+  reject_negative_sales: true
+  email_validation_regex: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+
+audit:
+  table_name: "etl_audit_log"
+  enable_row_level_metrics: true

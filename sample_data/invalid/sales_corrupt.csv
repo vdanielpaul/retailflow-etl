@@ -1,0 +1,4 @@
+transaction_id,store_id,product_id,employee_id,customer_id,quantity,unit_price,discount_amount,transaction_time
+TX-BAD-01,STR-001,PROD-001,EMP-001,CUST-0001,-5,49.99,0.00,2026-01-15 10:00:00
+TX-BAD-02,STR-001,PROD-002,EMP-001,CUST-0002,2,-149.99,10.00,2026-01-15 10:05:00
+TX-BAD-03,STR-002,PROD-003,EMP-002,CUST-0003,1,19.99,0.00,2099-01-15 10:10:00

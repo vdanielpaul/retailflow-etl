@@ -1,0 +1,10 @@
+# Development Environment Configuration Overrides
+
+pipeline:
+  environment: "development"
+  batch_size: 1000
+  stop_on_error: true
+
+logging:
+  level: "DEBUG"
+  console_output: true

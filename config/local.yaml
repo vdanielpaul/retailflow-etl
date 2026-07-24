@@ -1,0 +1,13 @@
+extends: "base.yaml"
+
+pipeline:
+  environment: "local"
+  batch_size: 1000
+  max_error_percentage: 10.0
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "retailflow_local"
+  user: "postgres"
+  password: "env_var:POSTGRES_PASSWORD"

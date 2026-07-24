@@ -1,0 +1,13 @@
+extends: "base.yaml"
+
+pipeline:
+  environment: "staging"
+  batch_size: 5000
+  max_error_percentage: 2.0
+
+database:
+  host: "staging-db.internal"
+  port: 5432
+  name: "retailflow_staging"
+  user: "retailflow_app"
+  password: "env_var:STAGING_POSTGRES_PASSWORD"
