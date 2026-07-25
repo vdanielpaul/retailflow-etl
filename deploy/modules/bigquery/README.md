@@ -1,23 +1,67 @@
 # BigQuery Module
 
-This Terraform module provisions the Google BigQuery datasets required for the RetailFlow ETL platform.
+This Terraform module provisions the Google BigQuery datasets required by the Cloud-Native Medallion data platform.
 
 ---
 
-## Purpose
-The module encapsulates the creation of the Medallion architecture datasets:
-1. **Bronze Layer Dataset**: Holds raw, append-only staging data.
-2. **Silver Layer Dataset**: Holds validated and cleaned canonical records.
-3. **Gold Layer Dataset**: Holds final analytical Star Schema facts and dimensions.
-4. **Metadata Dataset**: Holds watermarks and audit pipeline logs.
+## 📁 Medallion Architecture Flow
+
+```mermaid
+flowchart LR
+    GCS[Cloud Storage] --> Bronze[(retailflow_bronze)]
+    Bronze -->|Dataflow validation| Silver[(retailflow_silver)]
+    Silver -->|BigQuery SQL joins| Gold[(retailflow_gold)]
+    Dataflow -->|Audit logs| Metadata[(retailflow_metadata)]
+```
+
+- **Bronze Dataset**: Staging area for raw payloads. Raw CSV text lines are loaded directly as strings alongside ingestion timestamp and source filename metadata.
+- **Silver Dataset**: Canonical Data Model (CDM) layer. Contains schema-validated, normalized columns ready for analytical queries.
+- **Gold Dataset**: Curated reporting layer. Organizes transactional records into fact tables linked to dimension tables using surrogate keys.
+- **Metadata Dataset**: Support layer tracking run executions, watermark timestamps, and failure audits.
 
 ---
 
-## Design Decisions
-- **Dataset Naming**: Uses `retailflow_${var.environment}_${var.layer}` naming structure to ensure compliance with BigQuery ID constraints (only alphanumeric characters and underscores are allowed).
-- **Deletion Protection**: Exposes `delete_contents_on_destroy` so that datasets can be cleanly torn down in dev/staging environments, while protecting production tables from accidental drop commands.
-- **Expiration Policies**: Enforces a default 30-day table/partition expiration policy on the **Bronze** dataset to clean up raw staging files automatically and limit storage costs. Silver, Gold, and Metadata tables are retained indefinitely.
-- **Location Alignment**: Datasets are co-located in the primary region alongside storage and compute to eliminate inter-region network charges and latency.
+## ⚙️ Design Decisions & Constraints
+
+- **Dataset ID Naming**: Conforms to BigQuery naming rules (letters, numbers, underscores only). Formatted as `retailflow_${var.environment}_${var.layer}`.
+- **Co-Location Alignment**: All datasets **must reside in the same region** as Cloud Storage, Cloud Functions, and Dataflow (e.g. `us-central1`). This prevents inter-region data transfer latency and cross-region egress charges.
+- **Expirations Policies**: Expired data properties are **not** defined at the dataset level. Table partition and storage expirations are defined on the individual staging tables when created to prevent accidental loss of static assets.
+- **Deletion Protection**: Configure `delete_contents_on_destroy` parameter depending on target environment profiles:
+  - **Development**: `true` (Enables clean local test teardowns).
+  - **Staging**: Configurable.
+  - **Production**: `false` (Blocks dropping tables via automated plans).
+
+---
+
+## 🔒 Intended Dataset Access Control Model
+
+| Dataset | Access Permission | Intended IAM Identity |
+|---|---|---|
+| **Bronze** | Read / Write | Dataflow Worker Service Account |
+| **Silver** | Read / Write | Dataflow Worker & Transformation Service Accounts |
+| **Gold** | Read / Write | SQL Transformation Service Account |
+| **Gold** | Read | Analytics Users, BI Tool Service Accounts (e.g., Looker) |
+| **Metadata** | Read / Write | Cloud Functions, Dataflow Worker Service Accounts |
+
+---
+
+## 📄 Planned Tables List
+
+- **`retailflow_metadata` Dataset**:
+  - `etl_watermark`: Tracks file names, process status, and SHA-256 hashes.
+  - `etl_audit_log`: Logs stage timings, row counts, errors, and timeline events.
+  - `pipeline_runs`: Summary execution durations.
+  - `pipeline_errors`: Raw validation scorecards and trace details.
+
+---
+
+## 🛣️ Future Evolution Roadmap
+
+The following enterprise capabilities are deferred to Milestone 2 and v3:
+- **Authorized Views**: Restrict access to raw Silver tables by exposing only aggregated Gold views to reporting users.
+- **Materialized Views**: Speed up common dashboard aggregations.
+- **Data Policies (Column-Level Security)**: Mask sensitive columns (e.g. customer emails, phone numbers) using BigQuery Policy Tags.
+- **Row-Level Security**: Filter transaction reporting access by region or store location permissions.
 
 ---
 
@@ -43,30 +87,3 @@ The module encapsulates the creation of the Medallion architecture datasets:
 | `silver_dataset_id` | `string` | The ID of the Silver dataset. |
 | `gold_dataset_id` | `string` | The ID of the Gold dataset. |
 | `metadata_dataset_id` | `string` | The ID of the Metadata dataset. |
-
----
-
-## Example Usage
-
-```hcl
-module "bigquery" {
-  source = "./modules/bigquery"
-
-  project_id                 = "my-gcp-project"
-  region                     = "us-central1"
-  environment                = "dev"
-  delete_contents_on_destroy = true
-  owner                      = "data-platform-team"
-  data_classification        = "internal"
-
-  common_labels = {
-    project = "retailflow-etl"
-  }
-}
-```
-
----
-
-## Limitations
-- **ID Restrictions**: BigQuery dataset IDs cannot contain dashes (`-`). Ensure that `environment` variables do not contain characters other than alphanumeric and underscores.
-- **Location Modifications**: Location region parameters cannot be changed after dataset creation. Changing region variables triggers a destructive resource recreation.

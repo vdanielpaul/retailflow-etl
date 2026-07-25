@@ -10,16 +10,16 @@ resource "google_bigquery_dataset" "bronze" {
   dataset_id                 = "retailflow_${var.environment}_bronze"
   project                    = var.project_id
   location                   = var.region
-  description                = "Bronze layer dataset holding raw, immutable incoming store POS transactional table records."
+  description                = "Stores immutable raw business data ingested from operational source systems."
   delete_contents_on_destroy = var.delete_contents_on_destroy
 
-  # For raw temporary ingest data, set a default partition/table expiration to 30 days to limit long-term storage charges.
-  default_partition_expiration_ms = 2592000000 # 30 days in milliseconds
-  default_table_expiration_ms     = 2592000000 # 30 days in milliseconds
+  # Dataset-level table and partition expiration properties removed per best practices.
+  # Expiration controls are managed on individual staging/log tables during creation.
 
   labels = merge(var.common_labels, {
     owner               = var.owner
     data_classification = var.data_classification
+    layer               = "bronze"
   })
 }
 
@@ -31,14 +31,13 @@ resource "google_bigquery_dataset" "silver" {
   dataset_id                 = "retailflow_${var.environment}_silver"
   project                    = var.project_id
   location                   = var.region
-  description                = "Silver layer dataset containing cleaned, validated, and schema-compliant Canonical Data Model (CDM) records."
+  description                = "Stores validated and standardized business entities used for downstream transformations."
   delete_contents_on_destroy = var.delete_contents_on_destroy
-
-  # Silver tables do not set default expiration; data is retained indefinitely for operational analysis.
 
   labels = merge(var.common_labels, {
     owner               = var.owner
     data_classification = var.data_classification
+    layer               = "silver"
   })
 }
 
@@ -50,14 +49,13 @@ resource "google_bigquery_dataset" "gold" {
   dataset_id                 = "retailflow_${var.environment}_gold"
   project                    = var.project_id
   location                   = var.region
-  description                = "Gold layer dataset containing the final dimensional Star Schema warehouse models (fact_sales, dim_customer, etc.)."
+  description                = "Stores curated analytical models optimized for reporting and business intelligence workloads."
   delete_contents_on_destroy = var.delete_contents_on_destroy
-
-  # Gold analytics tables retain data indefinitely.
 
   labels = merge(var.common_labels, {
     owner               = var.owner
     data_classification = var.data_classification
+    layer               = "gold"
   })
 }
 
@@ -69,13 +67,12 @@ resource "google_bigquery_dataset" "metadata" {
   dataset_id                 = "retailflow_${var.environment}_metadata"
   project                    = var.project_id
   location                   = var.region
-  description                = "Metadata layer dataset containing etl_watermark, etl_audit_log, and execution tracking tables."
+  description                = "Stores operational metadata supporting pipeline execution, auditing, monitoring, and lineage."
   delete_contents_on_destroy = var.delete_contents_on_destroy
-
-  # Metadata tables do not set default expiration.
 
   labels = merge(var.common_labels, {
     owner               = var.owner
-    data_classification = "confidential" # Audit trail logs are confidential
+    data_classification = "confidential" # Pipeline credentials logs require confidential classification
+    layer               = "metadata"
   })
 }
