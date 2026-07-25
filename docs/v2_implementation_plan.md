@@ -19,11 +19,11 @@ Deploy the foundation layer of the serverless cloud data platform. This sets up 
 
 ### Repository Changes
 - **Added**:
-  - `deploy/main.tf` (Terraform provider configuration)
-  - `deploy/gcs.tf` (Terraform GCS resources definition)
+  - `deploy/main.tf` (Main entry point calling GCS modules)
+  - `deploy/modules/storage/main.tf` (Application & state buckets configuration)
+  - `deploy/modules/storage/variables.tf` (Storage module variables)
+  - `deploy/modules/storage/outputs.tf` (Storage module outputs)
   - `deploy/bigquery.tf` (Terraform BigQuery datasets and metadata tables setup)
-  - `deploy/variables.tf` (Terraform input variables definitions)
-  - `deploy/outputs.tf` (Terraform outputs exporter)
   - `sql/bigquery/01_create_bronze.sql` (Bronze raw staging table DDL)
   - `sql/bigquery/02_create_silver.sql` (Silver CDM canonical table DDL)
   - `sql/bigquery/03_create_gold.sql` (Gold star schema dimensions and partitioned facts DDL)
@@ -31,18 +31,21 @@ Deploy the foundation layer of the serverless cloud data platform. This sets up 
 
 ### Detailed Task Breakdown
 1. **Task 1.1**: Set up the `deploy/` directory and configure the Terraform GCP provider.
-2. **Task 1.2**: Define GCS buckets with Object Lifecycle rules (30-day raw retention, 90-day archive).
+2. **Task 1.2**: Define GCS buckets with Object Lifecycle rules. This includes the application data buckets (`raw`, `archive`, `quarantine`) and the dedicated, infrastructure-only `tfstate` bootstrap bucket.
+   * *Bootstrap State Migration (Separate Post-Apply Activity)*: After `tfstate` bucket is created, uncomment the remote backend config in `backend.tf` and run `terraform init -migrate-state` to migrate state.
 3. **Task 1.3**: Configure Terraform BigQuery datasets (`retailflow_bronze`, `retailflow_silver`, `retailflow_gold`, `retailflow_metadata`).
 4. **Task 1.4**: Define BigQuery DDL schema scripts for Bronze, Silver, Gold, and Metadata tables.
 5. **Task 1.5**: Execute schema deployment via script verification or Terraform BigQuery table resources.
 
 ### Deliverables
-- Three configured GCS buckets: `raw-bucket`, `archive-bucket`, `quarantine-bucket`.
-- Four configured BigQuery datasets: `retailflow_bronze`, `retailflow_silver`, `retailflow_gold`, `retailflow_metadata`.
-- Star Schema schemas deployed in the `retailflow_gold` dataset.
+- Three configured GCS application buckets: `raw-bucket`, `archive-bucket`, `quarantine-bucket`.
+- One dedicated GCS `tfstate` bootstrap bucket (not part of the application data flow).
+- Top-level and module outputs exposing bucket names and urls.
+- Completed state migration to GCS.
 
 ### Verification Checklist
-- [ ] GCS buckets exist and block public access.
+- [ ] GCS application and state buckets exist and block public access.
+- [ ] Terraform state migration succeeds and remote GCS state locks are active.
 - [ ] BigQuery datasets exist in the designated region.
 - [ ] Target schemas match table DDL definitions.
 
@@ -55,7 +58,8 @@ Deploy the foundation layer of the serverless cloud data platform. This sets up 
 - **Mitigation**: Use minimal privilege IAM Service Accounts during local terraform tests.
 
 ### Exit Criteria
-- `terraform apply` executes successfully and all BigQuery warehouse tables are queryable.
+- `terraform apply` executes successfully, the remote state backend is migrated to GCS, and all BigQuery warehouse tables are queryable.
+
 
 ---
 
