@@ -29,7 +29,8 @@ Establish the event-driven file ingestion workflow. When a POS CSV file lands in
 - **Task 2.1** [x]: Define GCS object finalize triggers, Pub/Sub topics, and Cloud Function infrastructure via Terraform. (Completed)
 - **Task 2.2** [x]: Implement the Cloud Function handler to detect GCS uploads, validate file metadata, and calculate SHA-256 file hashes. (Completed - scaffolding and parsing validation logic added)
 - **Task 2.3** [x]: Integrate BigQuery watermark duplicate checking (verifying if file hash has already been processed). (Completed - implemented MetadataRepository interface, BigQueryMetadataRepository, and models mapping)
-- **Task 2.4**: Implement structured JSON logging and publish trigger events to Pub/Sub to signal downstream Dataflow.
+- **Task 2.4** [x]: Implement structured JSON logging and publish trigger events to Pub/Sub to signal downstream Dataflow. (Completed - implemented GcsStorageService streaming file hashing and PubSubEventPublisher event client)
+
 
 
 

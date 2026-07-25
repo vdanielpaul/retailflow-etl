@@ -18,6 +18,7 @@ class IngestionApplicationService:
     def __init__(self, container: IngestionDependencyContainer) -> None:
         self.settings = container.settings
         self.metadata_repository = container.metadata_repository
+        self.storage_service = container.storage_service
         self.event_publisher = container.event_publisher
 
     def process_file_upload(self, gcs_event: GcsNotificationPayload, correlation_id: str) -> dict[str, Any]:
@@ -58,12 +59,11 @@ class IngestionApplicationService:
         )
         self.metadata_repository.record_audit(audit_init)
 
-        # 1. Calculate File Hashing (Task 2.3 Placeholder)
-        # Mock file hash for scaffolding validation
-        mock_file_hash = f"hash-{uuid.uuid4().hex[:12]}"
+        # 1. Calculate File Hashing via streaming storage read API
+        file_hash = self.storage_service.calculate_sha256(gcs_event.bucket, gcs_event.name)
         
         # 2. Duplicate Detection
-        duplicate_check = self.metadata_repository.lookup_duplicate(mock_file_hash)
+        duplicate_check = self.metadata_repository.lookup_duplicate(file_hash)
         if duplicate_check.is_duplicate:
             logger.warning(
                 f"Duplicate upload detected. Rejecting file processing: gs://{gcs_event.bucket}/{gcs_event.name}. "
@@ -71,7 +71,7 @@ class IngestionApplicationService:
                 extra={"extra_fields": {
                     "correlation_id": correlation_id,
                     "ingestion_id": run_id,
-                    "file_hash": mock_file_hash,
+                    "file_hash": file_hash,
                     "event_type": "FILE_DUPLICATE_REJECTED",
                     "duplicate_of_run": duplicate_check.run_id
                 }}
@@ -79,14 +79,14 @@ class IngestionApplicationService:
             audit_fail = AuditRecord(
                 run_id=run_id,
                 status="REJECTED_DUPLICATE",
-                error_message=f"Duplicate file hash detected: {mock_file_hash}"
+                error_message=f"Duplicate file hash detected: {file_hash}"
             )
             self.metadata_repository.record_audit(audit_fail)
-            raise DuplicateFileError(f"Duplicate file hash detected: {mock_file_hash}")
+            raise DuplicateFileError(f"Duplicate file hash detected: {file_hash}")
 
         # 3. Register Watermark Ingestion
         watermark_rec = WatermarkRecord(
-            file_hash=mock_file_hash,
+            file_hash=file_hash,
             filename=gcs_event.name,
             run_id=run_id
         )
@@ -100,13 +100,13 @@ class IngestionApplicationService:
             bucket=gcs_event.bucket,
             object_name=gcs_event.name,
             generation=gcs_event.generation,
-            file_hash=mock_file_hash,
+            file_hash=file_hash,
             received_at=datetime.now(timezone.utc).isoformat(),
             event_version="1.0",
             event_type="FILE_ACCEPTED"
         )
 
-        # 5. Publish Ingest trigger event downstream (Task 2.4)
+        # 5. Publish Ingest trigger event downstream
         self.event_publisher.publish_accepted_event(accepted_event)
 
         # 6. Update audit log on success
@@ -122,7 +122,7 @@ class IngestionApplicationService:
             extra={"extra_fields": {
                 "correlation_id": correlation_id,
                 "ingestion_id": run_id,
-                "file_hash": mock_file_hash,
+                "file_hash": file_hash,
                 "event_type": "FILE_ACCEPTED"
             }}
         )
@@ -131,5 +131,5 @@ class IngestionApplicationService:
             "status": "ACCEPTED",
             "run_id": run_id,
             "correlation_id": correlation_id,
-            "file_hash": mock_file_hash
+            "file_hash": file_hash
         }
