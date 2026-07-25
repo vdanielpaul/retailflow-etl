@@ -32,6 +32,13 @@ def test_pipeline_options_argparse():
     assert custom_options.environment.get() == "staging"
     assert options.get_all_options().get("project") == "test-project"
 
+def test_pipeline_options_missing_required():
+    """Verifies ValueError is raised when required settings are missing."""
+    with pytest.raises(ValueError) as exc_info:
+        run(["--environment", "staging"])
+    assert "Pipeline option" in str(exc_info.value)
+
+
 def test_pipeline_graph_assembly():
     """Verifies build_pipeline successfully maps graph transformations without throwing errors."""
     args = [
