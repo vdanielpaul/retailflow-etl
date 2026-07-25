@@ -14,7 +14,6 @@ class RetailFlowPipelineOptions(PipelineOptions):
         parser.add_value_provider_argument(
             "--quarantine_bucket",
             type=str,
-            required=True,
             help="The GCS bucket name where quarantined records will be saved."
         )
         parser.add_value_provider_argument(
@@ -30,24 +29,21 @@ class RetailFlowPipelineOptions(PipelineOptions):
         parser.add_value_provider_argument(
             "--input_file",
             type=str,
-            required=True,
             help="The GCS file URI of the raw input CSV to process."
         )
         parser.add_value_provider_argument(
             "--silver_dataset",
             type=str,
-            required=True,
             help="The target BigQuery Silver canonical dataset ID."
         )
         parser.add_value_provider_argument(
             "--metadata_dataset",
             type=str,
-            required=True,
             help="The BigQuery Metadata dataset ID for watermarks and audits."
         )
         parser.add_value_provider_argument(
             "--correlation_id",
             type=str,
-            required=True,
             help="The correlation trace identifier linking pipeline execution logs."
         )
+

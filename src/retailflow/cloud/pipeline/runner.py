@@ -22,14 +22,32 @@ def run(argv=None) -> Any:
     pipeline_options = PipelineOptions(argv)
     custom_options = pipeline_options.view_as(RetailFlowPipelineOptions)
 
+    # Enforce options validations programmatically (prevents argparse failures in test suites)
+    args_list = argv if argv is not None else sys.argv
+    required_options = ["input_file", "silver_dataset", "metadata_dataset", "quarantine_bucket", "correlation_id"]
+    for opt_name in required_options:
+        flag = f"--{opt_name}"
+        if not any(arg == flag or arg.startswith(f"{flag}=") for arg in args_list):
+            raise ValueError(f"Pipeline option --{opt_name} is required but was not provided.")
+
+
     # Configure logs
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     logger = logging.getLogger("retailflow-runner")
 
     # 2. Extract standard GCP parameters
-    project_id = pipeline_options.get_all_options().get("project", "retailflow-dev-project")
-    environment = custom_options.environment
-    metadata_dataset = custom_options.metadata_dataset.get() if hasattr(custom_options.metadata_dataset, "get") else custom_options.metadata_dataset
+    all_opts = pipeline_options.get_all_options()
+    project_id = all_opts.get("project", "retailflow-dev-project")
+    environment = all_opts.get("environment", "dev")
+
+    
+    # Resolve value provider safely depending on whether we are in execution context
+    metadata_dataset = (
+        custom_options.metadata_dataset.get()
+        if hasattr(custom_options.metadata_dataset, "is_accessible") and custom_options.metadata_dataset.is_accessible()
+        else all_opts.get("metadata_dataset") or "retailflow_metadata_placeholder"
+    )
+
 
     logger.info(f"Runner entrypoint starting. Project context: {project_id}")
 
