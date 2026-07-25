@@ -40,3 +40,23 @@ output "tfstate_bucket_name" {
   value       = module.storage.tfstate_bucket_name
   description = "The name of the GCS dedicated Terraform state bucket."
 }
+
+output "bronze_dataset_id" {
+  value       = module.bigquery.bronze_dataset_id
+  description = "The ID of the Bronze raw ingestion dataset."
+}
+
+output "silver_dataset_id" {
+  value       = module.bigquery.silver_dataset_id
+  description = "The ID of the Silver canonical dataset."
+}
+
+output "gold_dataset_id" {
+  value       = module.bigquery.gold_dataset_id
+  description = "The ID of the Gold warehouse dataset."
+}
+
+output "metadata_dataset_id" {
+  value       = module.bigquery.metadata_dataset_id
+  description = "The ID of the Metadata audit dataset."
+}
