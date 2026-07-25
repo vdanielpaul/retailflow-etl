@@ -1,256 +1,103 @@
 # RetailFlow ETL v2.0 — Engineering Implementation Plan
 
-This document serves as the master engineering roadmap for migrating the RetailFlow ETL pipeline to Google Cloud Platform. The plan is divided into 5 sequential, testable milestones.
+This document serves as the master engineering roadmap for migrating the RetailFlow ETL pipeline to Google Cloud Platform. The plan is organized around **Vertical Slices** of business capabilities.
 
 ---
 
-## Milestone 1: Cloud Infrastructure & Storage Setup
+## Milestone 1: Foundation Infrastructure & Storage Setup (COMPLETED)
 
 ### Objective
-Deploy the foundation layer of the serverless cloud data platform. This sets up storage buckets and BigQuery datasets.
+Deploy GCS storage bucket containers and BigQuery analytical dataset containers to establish the workspace layout.
 
-### Scope
-- **In Scope**: Terraform configuration, GCP Storage Buckets setup, BigQuery datasets, and table schema DDL definitions.
-- **Out of Scope**: Cloud Functions code, Apache Beam pipelines, and Java/Python database client wrapper code.
-
-### Prerequisites
-- Active GCP Project with permissions to create IAM roles, storage buckets, and BigQuery datasets.
-- Local Terraform CLI and Google Cloud SDK authenticated to the target GCP project.
-
-### Repository Changes
-- **Added**:
-  - `deploy/main.tf` (Main entry point calling GCS modules)
-  - `deploy/modules/storage/main.tf` (Application & state buckets configuration)
-  - `deploy/modules/storage/variables.tf` (Storage module variables)
-  - `deploy/modules/storage/outputs.tf` (Storage module outputs)
-  - `deploy/bigquery.tf` (Terraform BigQuery datasets and metadata tables setup)
-  - `sql/bigquery/01_create_bronze.sql` (Bronze raw staging table DDL)
-  - `sql/bigquery/02_create_silver.sql` (Silver CDM canonical table DDL)
-  - `sql/bigquery/03_create_gold.sql` (Gold star schema dimensions and partitioned facts DDL)
-  - `sql/bigquery/04_create_metadata.sql` (Audit and watermark table DDL)
-
-### Detailed Task Breakdown
-1. **Task 1.1** [x]: Set up the `deploy/` directory and configure the Terraform GCP provider. (Completed)
-2. **Task 1.2** [x]: Define GCS buckets with Object Lifecycle rules. This includes the application data buckets (`raw`, `archive`, `quarantine`) and the dedicated, infrastructure-only `tfstate` bootstrap bucket. (Completed)
-   * *Bootstrap State Migration (Separate Post-Apply Activity)*: After `tfstate` bucket is created, uncomment the remote backend config in `backend.tf` and run `terraform init -migrate-state` to migrate state.
-3. **Task 1.3**: Configure Terraform BigQuery datasets (`retailflow_bronze`, `retailflow_silver`, `retailflow_gold`, `retailflow_metadata`).
-4. **Task 1.4**: Define BigQuery DDL schema scripts for Bronze, Silver, Gold, and Metadata tables.
-5. **Task 1.5**: Execute schema deployment via script verification or Terraform BigQuery table resources.
-
-
-### Deliverables
-- Three configured GCS application buckets: `raw-bucket`, `archive-bucket`, `quarantine-bucket`.
-- One dedicated GCS `tfstate` bootstrap bucket (not part of the application data flow).
-- Top-level and module outputs exposing bucket names and urls.
-- Completed state migration to GCS.
-
-### Verification Checklist
-- [ ] GCS application and state buckets exist and block public access.
-- [ ] Terraform state migration succeeds and remote GCS state locks are active.
-- [ ] BigQuery datasets exist in the designated region.
-- [ ] Target schemas match table DDL definitions.
-
-### Testing Strategy
-- Execute `terraform plan` and verify resources match target specifications.
-- Run database connection check queries against empty BigQuery datasets.
-
-### Risks
-- **Risk**: Terraform configuration errors or permission issues.
-- **Mitigation**: Use minimal privilege IAM Service Accounts during local terraform tests.
-
-### Exit Criteria
-- `terraform apply` executes successfully, the remote state backend is migrated to GCS, and all BigQuery warehouse tables are queryable.
-
+### Detailed Task Status
+- **Task 1.1** [x]: Set up the `deploy/` directory and configure the Terraform GCP provider. (Completed)
+- **Task 1.2** [x]: Define GCS buckets with Object Lifecycle rules. This includes the application data buckets (`raw`, `archive`, `quarantine`) and the dedicated, infrastructure-only `tfstate` bootstrap bucket. (Completed)
+- **Task 1.3** [x]: Configure Terraform BigQuery datasets (`retailflow_bronze`, `retailflow_silver`, `retailflow_gold`, `retailflow_metadata`). (Completed)
 
 ---
 
-## Milestone 2: Thin Ingestion Cloud Function
+## Milestone 2: Vertical Slice 1 — Event-Driven File Ingestion
 
 ### Objective
-Deploy the event-driven serverless ingestion orchestrator Cloud Function that detects newly arrived storage files, validates file metadata, checks watermarks, and triggers downstream processing.
+Establish the event-driven file ingestion workflow. When a POS CSV file lands in GCS, the system detects it, extracts metadata, validates watermarks/duplicate hashes, logs the event, and publishes an ingest event trigger.
 
 ### Scope
-- **In Scope**: Ingestion Cloud Function trigger code, GCS Storage finalize event binding, BigQuery watermark checks, and Pub/Sub publishing.
-- **Out of Scope**: Cloud Dataflow Apache Beam execution code and SQL warehouse joins.
- 
-### Prerequisites
-- Milestone 1 deployed successfully.
-- GCS raw bucket configured to emit finalize events.
- 
-### Repository Changes
-- **Added**:
-  - `src/retailflow/cloud/main.py` (Cloud Function trigger handler)
-  - `src/retailflow/cloud/requirements.txt` (Cloud Function dependency pins)
-  - `deploy/cloud_functions.tf` (Terraform Cloud Function resource definition)
-  - `deploy/pubsub.tf` (Terraform Pub/Sub topic definition)
-- **Modified**:
-  - `deploy/main.tf` (Append Cloud Function IAM policy bindings)
- 
+- **In Scope**: Pub/Sub topic and subscription setup, Cloud Function ingestion trigger, file SHA-256 hash calculation, BigQuery watermark lookup, and structured JSON logs.
+- **Out of Scope**: Apache Beam processing, data transformations, and SQL warehouse joins.
+
 ### Detailed Task Breakdown
-1. **Task 2.1**: Define Pub/Sub topic `retailflow-ingest-trigger-topic` and subscription via Terraform.
-2. **Task 2.2**: Write Cloud Function entry point function to calculate file hashes and check duplicate files via BigQuery watermark queries.
-3. **Task 2.3**: Implement Pub/Sub message payload creation containing `source_file` metadata and `run_id`.
-4. **Task 2.4**: Configure Terraform deployment definitions for Cloud Functions packaging.
- 
+- **Task 2.1**: Define GCS object finalize triggers, Pub/Sub topics, and Cloud Function infrastructure via Terraform.
+- **Task 2.2**: Implement the Cloud Function handler to detect GCS uploads, validate file metadata, and calculate SHA-256 file hashes.
+- **Task 2.3**: Integrate BigQuery watermark duplicate checking (verifying if file hash has already been processed).
+- **Task 2.4**: Implement structured JSON logging and publish trigger events to Pub/Sub to signal downstream Dataflow.
+
 ### Deliverables
-- Deployed Pub/Sub topic and subscription.
-- Active Cloud Function triggered by GCS object creation events.
- 
+- Active GCS trigger binding to Pub/Sub topic `retailflow-ingest-trigger-topic`.
+- Deployed thin Cloud Function orchestrating GCS events.
+- Structured watermark log tables checked and updated.
+
 ### Verification Checklist
-- [ ] Uploading a file to `gs://raw-bucket/` triggers the Cloud Function.
-- [ ] Cloud Function logs output structured JSON logs.
-- [ ] Pub/Sub receives the ingest event message.
- 
+- [ ] Uploading a POS CSV file to `gs://raw-bucket/` triggers the Cloud Function.
+- [ ] Duplicate uploads are detected and logged as duplicates, and do not publish events.
+- [ ] Pub/Sub receives ingestion trigger events containing file path and run metrics.
+
 ### Testing Strategy
-- **Unit Tests**: Mock GCS events and BigQuery metadata queries using python mocks.
-
-- **Integration Tests**: Verify end-to-end event flow using local emulators.
-
-### Risks
-- **Risk**: Event loops caused by duplicate trigger executions.
-- **Mitigation**: Ensure Cloud Function handles duplicate triggers idempotently by checking watermark status before publishing.
-
-### Exit Criteria
-- Uploading a new file successfully triggers Pub/Sub events; uploading a duplicate file is safely skipped.
+- **Unit Tests**: Mock GCS events and BigQuery watermark database select statements.
+- **Integration Tests**: Verify event trigger bindings inside local GCP emulators.
 
 ---
 
-## Milestone 3: Apache Beam & Distributed Dataflow Pipeline
+## Milestone 3: Vertical Slice 2 — Batch Processing Pipeline
 
 ### Objective
-Evolve the core validation and transformation engine into a scalable, distributed execution pipeline using Apache Beam.
+Implement the data processing core. Consume the ingestion event, read and validate raw CSV rows, normalize schema data to the Canonical Data Model (CDM), calculate financial metrics, and load records to `silver.sales_canonical`.
 
 ### Scope
-- **In Scope**: Apache Beam pipeline runner, framework-agnostic row validation functions, data normalization, and metrics accumulation.
-- **Out of Scope**: BigQuery SQL joins and loaders.
-
-### Prerequisites
-- Milestones 1 and 2 successfully deployed.
-- Python Apache Beam package installed in virtual environment.
-
-### Repository Changes
-- **Added**:
-  - `src/retailflow/beam/pipeline.py` (Apache Beam DAG definition)
-  - `src/retailflow/beam/transforms.py` (Custom Beam ParDo transforms)
-  - `src/retailflow/adapters/storage.py` (StorageProvider abstraction)
-- **Modified**:
-  - `src/retailflow/application/validation.py` (Refactor rules into pure-python functions)
-  - `src/retailflow/application/transformation.py` (Refactor normalizers into pure-python functions)
+- **In Scope**: Apache Beam pipeline definitions, raw GCS file reader, row validations (negative quantites, future dates), CDM mapping, and BigQuery write load jobs.
+- **Out of Scope**: IAM roles, SQL joins, and reporting table updates.
 
 ### Detailed Task Breakdown
-1. **Task 3.1**: Create `StorageProvider` interfaces and implement local vs GCS adapters.
-2. **Task 3.2**: Refactor validation engines from v1.0 into pure-python row validator functions.
-3. **Task 3.3**: Implement Beam custom `ParDo` classes to run validation and cleaning transforms.
-4. **Task 3.4**: Write Apache Beam pipeline to read files from GCS and output to Silver GCS staging.
-
-### Deliverables
-- Deployed Apache Beam DirectRunner and Dataflow pipeline classes.
-- Validated canonical schema dataset files exported to GCS.
-
-### Verification Checklist
-- [ ] Beam pipeline parses CSV rows correctly.
-- [ ] Validation exceptions are successfully routed to the GCS quarantine bucket.
-- [ ] Pipeline executes locally using the DirectRunner.
-
-### Testing Strategy
-- **Beam Tests**: Use Beam `TestPipeline` to verify row transformations in isolation.
-- **Unit Tests**: Verify validator functions output correct boolean masks.
-
-### Risks
-- **Risk**: Out-of-memory errors on worker nodes.
-- **Mitigation**: Avoid side inputs for large dimensions; delegate joins to BigQuery.
-
-### Exit Criteria
-- Test datasets run through the Beam pipeline locally and export validated Silver CSV payloads.
+- **Task 3.1**: Create `StorageProvider` GCS adapter and refactor validation rules into pure-python functions.
+- **Task 3.2**: Develop the Apache Beam pipeline transforms running on Cloud Dataflow.
+- **Task 3.3**: Configure Beam output partitioning to write clean rows to BigQuery Silver and bad records to the GCS quarantine bucket.
 
 ---
 
-## Milestone 4: BigQuery Loader & SQL Transforms
+## Milestone 4: Vertical Slice 3 — Warehouse Modeling
 
 ### Objective
-Deploy the target warehouse loading mechanism and database schema transformations in BigQuery.
+Transform cleaned Silver tables into Gold analytical reporting tables using SQL-based dimensional star schemas.
 
 ### Scope
-- **In Scope**: BigQuery Loader class, BigQuery Load Jobs API integration, and SQL MERGE scripts for Star Schema joins.
-- **Out of Scope**: Cloud scheduler automation and custom dashboards.
-
-### Prerequisites
-- Milestones 1, 2, and 3 successfully deployed.
-
-### Repository Changes
-- **Added**:
-  - `src/retailflow/adapters/warehouse.py` (WarehouseClient abstraction)
-  - `src/retailflow/loader/bq_loader.py` (BigQuery write load job manager)
-  - `sql/bigquery/05_merge_fact_sales.sql` (SQL MERGE fact ingestion query)
-- **Modified**:
-  - `src/retailflow/adapters/database.py` (Deprecate PostgreSQL driver code)
+- **In Scope**: BigQuery Gold table DDLs, SQL MERGE queries, key mapping joins, and watermark status updates.
+- **Out of Scope**: CI/CD automation and alerting.
 
 ### Detailed Task Breakdown
-1. **Task 4.1**: Implement `BigQueryWarehouse` wrapper executing Write Load Jobs.
-2. **Task 4.2**: Write BigQuery SQL MERGE query to map Silver transaction rows to Gold surrogate keys.
-3. **Task 4.3**: Implement target transaction updates and historical watermarks records.
-
-### Deliverables
-- Deployed BigQuery database load adapters.
-- Deployed warehouse schema DDLs and SQL merge procedures.
-
-### Verification Checklist
-- [ ] BigQuery Load Jobs write canonical records to Silver datasets successfully.
-- [ ] SQL MERGE queries resolve surrogate keys and insert facts into Gold tables.
-- [ ] All database updates execute within atomic write limits.
-
-### Testing Strategy
-- **Integration Tests**: Execute BigQuery Load Jobs using mock parameters.
-- **SQL Tests**: Run merge statements on mock Silver tables and verify output dimensions.
-
-### Risks
-- **Risk**: Slow query performance or scan cost growth during joins.
-- **Mitigation**: Cluster target tables on surrogate key join columns.
-
-### Exit Criteria
-- Uploaded data is successfully loaded into Gold tables with resolved surrogate keys.
+- **Task 4.1**: Define BigQuery table schemas for `fact_sales`, `dim_customer`, `dim_product`, `dim_store`, `dim_employee`.
+- **Task 4.2**: Write SQL MERGE procedures to map Silver transactional natural keys into Gold surrogate keys.
+- **Task 4.3**: Integrate warehouse run history logging into the `metadata.etl_audit_log` tables.
 
 ---
 
-## Milestone 5: End-to-End Testing & Observability
+## Milestone 5: Vertical Slice 4 — Platform Operations
 
 ### Objective
-Deploy operational monitoring, error alerting, and CI/CD pipelines. Execute E2E validation tests.
+Operationalize and secure the deployed resources using enterprise-grade platform controls.
 
 ### Scope
-- **In Scope**: GitHub Actions pipelines, Cloud Monitoring alert rules, logging log queries, and E2E test runs.
-- **Out of Scope**: New functional feature additions.
-
-### Prerequisites
-- Milestones 1 through 4 successfully deployed.
-
-### Repository Changes
-- **Added**:
-  - `.github/workflows/deploy.yml` (Terraform and Application CI/CD workflow)
-  - `deploy/monitoring.tf` (Terraform monitoring and alerts definition)
-  - `tests/e2e/test_gcp_pipeline.py` (Cloud end-to-end validation test)
+- **In Scope**: IAM policies, Service Account scopes, Secret Manager credentials integration, Cloud Monitoring dashboards, and GCS remote backend state migration.
 
 ### Detailed Task Breakdown
-1. **Task 5.1**: Define Cloud Monitoring dashboards and Dataflow status monitoring rules via Terraform.
-2. **Task 5.2**: Write GitHub Actions build pipelines with automated Terraform plans.
-3. **Task 5.3**: Build and execute E2E test suites inside the target GCP pre-production project.
+- **Task 5.1**: Deploy Service Accounts with least-privilege policies.
+- **Task 5.2**: Move Terraform backend state from local to the GCS `tfstate` bucket.
+- **Task 5.3**: Deploy alerting triggers for pipeline errors and create metrics dashboards.
 
-### Deliverables
-- CI/CD release workflow configured in GitHub.
-- Deployed Cloud Monitoring alert dashboards.
-- Fully verified end-to-end cloud pipeline.
+---
 
-### Verification Checklist
-- [ ] Complete pipeline executes from raw file upload to Gold BigQuery insertion without manual steps.
-- [ ] GCS bucket events trigger Cloud Functions, Pub/Sub, Dataflow, and BigQuery.
-- [ ] Monitoring dashboard displays correct data volume metrics.
+## Milestone 6: Vertical Slice 5 — CI/CD & Production Readiness
 
-### Testing Strategy
-- Execute cloud end-to-end integration tests using synthetic datasets.
+### Objective
+Prepare the repository for long-term production maintenance.
 
-### Risks
-- **Risk**: Flaky integration tests or deployment credential leaks.
-- **Mitigation**: Use restricted IAM roles for GitHub Actions execution.
-
-### Exit Criteria
-- Complete E2E integration test runs successfully in under 10 minutes and code coverage metrics exceed 90%.
+### Scope
+- **In Scope**: GitHub Actions pipelines, deployment playbooks, disaster recovery runbooks, and end-to-end integration tests.
