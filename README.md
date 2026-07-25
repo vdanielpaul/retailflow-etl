@@ -1,134 +1,114 @@
 # RetailFlow ETL 🚀
-> **Enterprise Sales Data Warehouse Pipeline**
+> **Enterprise Sales Data Warehouse Pipeline & Cloud Migration**
 
-[![CI Pipeline](https://github.com/retailflow/retailflow-etl/actions/workflows/ci.yml/badge.svg)](https://github.com/retailflow/retailflow-etl/actions/workflows/ci.yml)
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![Terraform Version](https://img.shields.io/badge/terraform-1.5%2B-violet)](https://www.terraform.io/)
 [![License](https://img.shields.io/badge/license-MIT-green)](#license)
 
-RetailFlow ETL is a production-grade, enterprise sales data warehouse pipeline built with **Python**, **Pandas**, and **PostgreSQL**. Designed to simulate a retail enterprise processing nightly Point-of-Sale (POS) exports from **250+ store locations**, RetailFlow enforces modular data quality validation, normalizes incoming feeds into a Canonical Data Model, resolves surrogate keys via in-memory caching, and bulk loads a PostgreSQL Star Schema warehouse within atomic transaction boundaries.
+RetailFlow ETL v2.0 is a production-grade, enterprise sales data warehouse pipeline. Originally built as an on-premises pipeline (Python, Pandas, PostgreSQL), it is currently undergoing a **cloud-native migration to Google Cloud Platform (GCP)**. The migrated platform shifts processing from scheduled batch scripts to an event-driven serverless ingestion and batch Dataflow (Apache Beam) processing architecture, landing clean medallion data into **Google BigQuery**.
+
+Designed to simulate a retail enterprise processing nightly Point-of-Sale (POS) exports from **250+ store locations**, RetailFlow enforces modular data quality validation, normalizes incoming feeds into a Canonical Data Model, resolves surrogate keys via in-memory caching, and bulk loads a BigQuery Star Schema warehouse.
+
+---
+
+## 🏛️ Cloud Ingestion Architecture (Vertical Slice 1)
+
+```mermaid
+flowchart TD
+    StoreCSV[Daily POS Store Upload] --> GCS{Raw GCS Bucket}
+    GCS -- OBJECT_FINALIZE Event --> Notification[Storage Notification]
+    Notification --> PubSubA[Pub/Sub: ingestion-events]
+    PubSubA --> CF[Cloud Function Gen2]
+    
+    CF --> Hashing[Streaming SHA-256 Hashing]
+    Hashing --> MetadataCheck{Metadata Repository Lookup}
+    
+    MetadataCheck -- Duplicate Hash Matching --> BQ_Audit_Reject[Write audit status: REJECTED_DUPLICATE]
+    BQ_Audit_Reject --> Terminate[Terminate Execution]
+    
+    MetadataCheck -- New File Hash --> BQ_Watermark[Write watermark hash to etl_watermark]
+    BQ_Watermark --> BQ_Audit_Ingest[Write audit status: INGESTED]
+    BQ_Audit_Ingest --> PubSubB[Pub/Sub: processing-events]
+    
+    PubSubB --> Dataflow[GCP Dataflow Batch Pipeline]
+```
 
 ---
 
 ## 🌟 Key Features
 
-- 🏗️ **Medallion Architecture & Star Schema**: Maps Bronze (Raw CSV) → Silver (Validated Data) → Gold (Dimensional Warehouse: `dim_customer`, `dim_product`, `dim_store`, `dim_employee`, `dim_date`, and partitioned `fact_sales`).
-- 🛡️ **Data Quality Validation & Quarantine**: Vectorized schema enforcement, datatype coercion, and domain rule checks (`quantity > 0`, non-negative prices, future date prevention). Quarantines invalid records per run to `data/bad_records/<run_id>/`.
-- ⚡ **High-Performance Bulk Ingestion**: Supports streaming `COPY FROM STDIN` and `psycopg2.extras.execute_values` chunked batch loading achieving **>25,000 rows/sec** throughput.
-- 🔁 **Incremental Processing & Idempotency**: High-watermark tracking and SHA-256 file content hashing prevent duplicate ingestion and enable manual operator replay.
-- 📊 **Data Quality Scorecards**: Generates weighted Data Quality Scorecards (0 - 100%) across Completeness, Validity, Uniqueness, Consistency, Conformity, and Freshness.
-- 🔒 **Sensitive Data Redaction**: Automatic masking of passwords, secrets, and connection URIs in structured JSON log files.
-- 🖥️ **Production Operational CLI**: CLI runner supporting `--config`, `--env`, `--batch-size`, `--replay`, `--dry-run`, `--validation-only`, and standardized exit codes (`0` - `6`).
+- 🏗️ **Medallion Architecture & Star Schema**: Maps Bronze (Raw GCS) → Silver (Validated canonical BigQuery) → Gold (Dimensional Warehouse: `dim_customer`, `dim_product`, `dim_store`, `dim_employee`, `fact_sales`).
+- 🛡️ **Data Ingestion Duplication Guards**: Instantly flags repeat uploads at the trigger boundary via SHA-256 content hashes, stopping run executions before spinning up compute resources.
+- ⚡ **Chunk-Based Hashing Streams**: Reads GCS files in 256KB segments, maintaining a small memory footprint safe for multi-GB files.
+- 🔄 **Distributed Correlation Tracing**: Passes `correlation_id` values across Cloud Function JSON logs and Pub/Sub headers to trace query lineage from GCS to BigQuery tables.
+- 🔒 **Stateless Serverless Ingestion**: The ingestion Cloud Function is stateless, coordinating queries via decoupled repository interfaces.
 
 ---
 
-## 🏛️ Pipeline Architecture
-
-```mermaid
-flowchart TD
-    StoreCSV[Nightly Store CSV Feeds] --> IncCheck{Incremental Hash Check}
-    IncCheck -- Duplicate Hash --> Skip[Skip Processing / Log]
-    IncCheck -- New / Replay --> ValEngine[Data Validation Engine]
-
-    ValEngine -- Invalid Rows --> Quarantine[Quarantine: data/bad_records/run_id/]
-    ValEngine -- Valid Rows --> CDM[Canonical Data Model]
-
-    CDM --> Cleaner[Data Cleaner]
-    Cleaner --> Normalizer[Data Normalizer]
-    Normalizer --> Enricher[Financial Metrics Enricher]
-    Enricher --> SurrogateLookup[In-Memory Surrogate Key Resolver]
-    SurrogateLookup --> SCD1[SCD Type 1 Processor]
-
-    SCD1 --> FactBuilder[Fact Table Payload Builder]
-    FactBuilder --> Loader[PostgreSQL Bulk Ingestion: COPY / execute_values]
-
-    Loader --> Warehouse[(PostgreSQL Star Schema DW)]
-    Loader --> Watermark[Register Watermark & Audit Logs]
-```
+## 🛠️ Technology Stack
+- **Languages**: Python `3.9` / `3.12`
+- **GCP Services**: Google Cloud Storage, Pub/Sub, Cloud Functions (Gen2), Cloud Dataflow (Apache Beam), BigQuery
+- **Infrastructure as Code**: Terraform `>= 1.5`
+- **Testing**: pytest (complete mocks for GCP APIs)
 
 ---
 
-## 🚀 Quick Start Guide
+## 🚀 Migration Roadmap
 
-### 1. Prerequisites
-- Python `>= 3.9`
-- PostgreSQL `>= 13`
+### 📦 Milestone 1: Core Storage & Dataset Scaffolding (COMPLETED)
+- Provisioned Raw, Archive, and Quarantine GCS buckets.
+- Provisioned BigQuery Medallion datasets (`bronze`, `silver`, `gold`, `metadata`).
 
-### 2. Environment Setup
-```bash
-# Clone repository
-git clone https://github.com/retailflow/retailflow-etl.git
-cd retailflow-etl
+### 📥 Vertical Slice 1: Event-Driven File Ingestion (COMPLETED)
+- Provisioned GCS-to-Pub/Sub trigger notifications.
+- Created stateless Cloud Function Gen2 runtime wrapper.
+- Implemented `MetadataRepository` BigQuery adapter.
+- Implemented streaming SHA-256 file hashing.
 
-# Create virtual environment and install dependencies
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+### ⚙️ Vertical Slice 2: Batch Processing Pipeline (IN PROGRESS)
+- Adapt the existing validation and transformation engine into a Cloud Dataflow (Apache Beam) pipeline.
+- Write verified transactional records into BigQuery Silver canonical datasets.
 
-### 3. Run Pipeline via Operational CLI
-```bash
-# Execute dry-run mode (Validation & Transformation without DB commits)
-python -m retailflow.cli --dry-run --file sample_data/small/sales_1k.csv
+### 📊 Vertical Slice 3: Warehouse Modeling (PLANNED)
+- DDL tables instantiation for Gold dimension and facts.
+- BigQuery SQL MERGE procedures mapping Silver natural keys to Gold surrogate keys.
 
-# Execute full pipeline in development environment
-python -m retailflow.cli --config config/development.yaml --file sample_data/small/sales_1k.csv
-```
+### 🔒 Vertical Slice 4: Platform Operations (PLANNED)
+- IAM policies, Service Accounts, metrics dashboards, and Terraform backend state migration.
 
-### 4. Run Test Suite & Benchmarks
-```bash
-# Run unit, integration, and E2E test suites
-pytest tests/unit tests/integration tests/e2e
-
-# Run performance benchmarks
-python benchmarks/run_benchmarks.py
-```
+### 🔄 Vertical Slice 5: CI/CD & Production Readiness (PLANNED)
+- GitHub Actions pipelines, deployment runbooks, and disaster recovery playbooks.
 
 ---
 
-## 📁 Repository Structure
+## 📁 Repository Layout
 
 ```text
 retailflow-etl/
-├── config/                  # Multi-environment configuration profiles (base, dev, prod, testing, local)
-├── data/                    # Data staging lifecycle (raw, staging, processed, archive, bad_records)
-├── docs/                    # Architecture, design decisions, ADRs, database DDL guides, operations runbook
-│   ├── adr/                 # Architecture Decision Records (ADR-001 through ADR-007)
-│   ├── architecture_review.md
-│   ├── incremental_loading.md
-│   ├── operations_runbook.md
-│   ├── postgresql_performance.md
-│   ├── project_showcase.md
-│   └── transformation_rules.md
-├── sample_data/             # Reusable sample datasets (small, medium, invalid, duplicates)
-├── sql/                     # PostgreSQL DDL & DML scripts (ddl/, dml/, views/, functions/)
+├── deploy/                  # Terraform GCP Infrastructure Configurations
+│   ├── main.tf              # Instantiates core platform modules
+│   ├── variables.tf         # Project parameters and configuration variables
+│   ├── outputs.tf           # Output endpoints exposing GCS/PubSub names
+│   ├── environments/        # Environment-specific configuration tfvars
+│   └── modules/             # Reusable infrastructure blocks
+│       ├── storage/         # GCS raw, archive, quarantine buckets
+│       ├── bigquery/        # BigQuery Medallion datasets container DDLs
+│       └── pubsub/          # Ingestion and processing event topics
 ├── src/retailflow/          # Main Python application package
-│   ├── audit/               # Operational audit subsystem, timeline engine, and publishers
-│   ├── config/              # Layered YAML configuration loader & semantic validation
-│   ├── database/            # PostgreSQL connection pool & transaction manager
-│   ├── exceptions/          # Structured domain exception hierarchy
-│   ├── health/              # Pre-flight environment & dependency health checker
-│   ├── incremental/         # Incremental watermark manager, change detector & state checkpoints
-│   ├── loader/              # Dimension loader, fact loader, bulk utilities, transaction coordinator
-│   ├── metrics/             # Operational performance metrics collector
-│   ├── models/              # Canonical Data Model (CDM), validation, loader, & scorecard DTOs
-│   ├── transformation/      # Cleaner, normalizer, enricher, surrogate key resolver, SCD1
-│   ├── utils/               # Structured JSON logger & sensitive data redactor
-│   ├── validation/          # Modular quality validators & Data Quality Scorecard generator
-│   └── cli.py               # Operational Command-Line Interface runner
-├── tests/                   # Test suite (unit/, integration/, e2e/, harness/)
-├── benchmarks/              # Performance throughput & memory profiling suite
-├── pyproject.toml           # Project metadata & linter configuration
-├── requirements.txt         # Production dependency pins
-└── README.md                # Project README documentation entry point
+│   ├── cli.py               # Legacy on-premises CLI runner
+│   ├── cloud/               # GCP Serverless Ingestion Subsystem (Cloud Function)
+│   │   ├── application/     # Ingestion application orchestrator
+│   │   ├── config/          # Environment settings manager
+│   │   ├── handlers/        # Ingest CloudEvent Pub/Sub wrapper parsing
+│   │   ├── logging/         # Structured JSON log formatter
+│   │   ├── models/          # Event contract payloads
+│   │   ├── repositories/    # MetadataRepository database interface and BigQuery adapter
+│   │   └── services/        # Storage streaming hashing and EventPublisher clients
+│   └── transformation/      # Validation and cleaning logic (framework independent)
+├── tests/                   # Complete pytest suite
+│   ├── unit/                # On-premises module unit tests
+│   │   └── cloud/           # Ingestion Cloud Function trigger & BQ repo mock tests
+│   └── e2e/                 # End-to-End integration tests
+├── requirements.txt         # Production Python dependency pins
+└── README.md                # Project documentation entry point
 ```
-
----
-
-## 📚 Documentation Index
-- 📖 [Project Showcase & Interview Guide](docs/project_showcase.md)
-- 📐 [Architecture Review & Design Trade-offs](docs/architecture_review.md)
-- 🛠️ [Operations Engineering Runbook](docs/operations_runbook.md)
-- ⚡ [PostgreSQL Bulk Performance & Tuning](docs/postgresql_performance.md)
-- 🔄 [Incremental Processing & Watermarking Guide](docs/incremental_loading.md)
-- 📑 [Transformation Rules Specification](docs/transformation_rules.md)
-- 🏛️ [Warehouse Star Schema Design](docs/05_warehouse_design.md)
