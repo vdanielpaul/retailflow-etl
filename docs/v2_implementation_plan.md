@@ -60,9 +60,12 @@ Implement the data processing core. Consume the ingestion event, read and valida
 - **Out of Scope**: IAM roles, SQL joins, and reporting table updates.
 
 ### Detailed Task Breakdown
-- **Task 3.1**: Create `StorageProvider` GCS adapter and refactor validation rules into pure-python functions.
-- **Task 3.2**: Develop the Apache Beam pipeline transforms running on Cloud Dataflow.
-- **Task 3.3**: Configure Beam output partitioning to write clean rows to BigQuery Silver and bad records to the GCS quarantine bucket.
+- **Task 3.1** [x]: Pipeline foundation. (Completed - implemented options parser, build_pipeline, runner entrypoint, and local tests)
+- **Task 3.2** [ ]: Input adapters. (GCS readers, CSV parsing, canonical model conversion)
+- **Task 3.3** [ ]: Validation engine integration. (Route rejected rows to GCS quarantine)
+- **Task 3.4** [ ]: Transformation engine. (Reusing v1.0 cleaning, normalization, enrichment)
+- **Task 3.5** [ ]: Silver loading. (BigQuery target loads, metrics tracking)
+
 
 ---
 
