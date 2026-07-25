@@ -65,13 +65,13 @@ Deploy the foundation layer of the serverless cloud data platform. This sets up 
 Deploy the event-driven serverless ingestion orchestrator Cloud Function that detects newly arrived storage files, validates file metadata, checks watermarks, and triggers downstream processing.
 
 ### Scope
-- **In Scope**: Ingestion Cloud Function trigger code, GCS Storage finalize event binding, Firestore watermark integration, and Pub/Sub publishing.
+- **In Scope**: Ingestion Cloud Function trigger code, GCS Storage finalize event binding, BigQuery watermark checks, and Pub/Sub publishing.
 - **Out of Scope**: Cloud Dataflow Apache Beam execution code and SQL warehouse joins.
-
+ 
 ### Prerequisites
 - Milestone 1 deployed successfully.
 - GCS raw bucket configured to emit finalize events.
-
+ 
 ### Repository Changes
 - **Added**:
   - `src/retailflow/cloud/main.py` (Cloud Function trigger handler)
@@ -80,24 +80,25 @@ Deploy the event-driven serverless ingestion orchestrator Cloud Function that de
   - `deploy/pubsub.tf` (Terraform Pub/Sub topic definition)
 - **Modified**:
   - `deploy/main.tf` (Append Cloud Function IAM policy bindings)
-
+ 
 ### Detailed Task Breakdown
 1. **Task 2.1**: Define Pub/Sub topic `retailflow-ingest-trigger-topic` and subscription via Terraform.
-2. **Task 2.2**: Write Cloud Function entry point function to calculate file hashes and check duplicate files via Firestore watermarks.
+2. **Task 2.2**: Write Cloud Function entry point function to calculate file hashes and check duplicate files via BigQuery watermark queries.
 3. **Task 2.3**: Implement Pub/Sub message payload creation containing `source_file` metadata and `run_id`.
 4. **Task 2.4**: Configure Terraform deployment definitions for Cloud Functions packaging.
-
+ 
 ### Deliverables
 - Deployed Pub/Sub topic and subscription.
 - Active Cloud Function triggered by GCS object creation events.
-
+ 
 ### Verification Checklist
 - [ ] Uploading a file to `gs://raw-bucket/` triggers the Cloud Function.
 - [ ] Cloud Function logs output structured JSON logs.
 - [ ] Pub/Sub receives the ingest event message.
-
+ 
 ### Testing Strategy
-- **Unit Tests**: Mock GCS events and Firestore transactions using python mocks.
+- **Unit Tests**: Mock GCS events and BigQuery metadata queries using python mocks.
+
 - **Integration Tests**: Verify end-to-end event flow using local emulators.
 
 ### Risks
