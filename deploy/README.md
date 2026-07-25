@@ -19,13 +19,16 @@ deploy/
 │   ├── dev.tfvars            # Development overrides
 │   ├── staging.tfvars        # Staging overrides
 │   └── prod.tfvars           # Production overrides
-├── modules/                  # Resource module configurations (scaffolded)
-│   ├── storage/              # GCS buckets module (empty placeholder)
-│   ├── bigquery/             # BigQuery datasets module (empty placeholder)
-│   ├── pubsub/               # Pub/Sub topics module (empty placeholder)
-│   ├── iam/                  # IAM roles module (empty placeholder)
-│   ├── monitoring/           # Cloud Monitoring module (empty placeholder)
-│   └── cloud_functions/      # Cloud Functions module (empty placeholder)
+├── modules/                  # Resource module configurations
+│   ├── storage/              # GCS buckets module configuration
+│   │   ├── main.tf           # App & state bucket resources
+│   │   ├── variables.tf      # Storage module inputs
+│   │   └── outputs.tf        # Storage module outputs
+│   ├── bigquery/
+│   ├── pubsub/
+│   ├── iam/
+│   ├── monitoring/
+│   └── cloud_functions/
 └── scripts/                  # Automated verification shell scripts
     ├── terraform_fmt.sh      # Format compliance check script
     ├── terraform_validate.sh # Syntax validation verify script
@@ -128,3 +131,13 @@ For local development, states are stored locally in `deploy/terraform.tfstate`. 
    ```bash
    terraform init -migrate-state
    ```
+
+---
+
+## 📡 Future Platform Compatibility
+
+The storage configuration is designed to integrate seamlessly with downstream GCP serverless services:
+- **Cloud Functions Triggers**: The raw bucket is prepared to emit object creation notification events that trigger Cloud Functions.
+- **Eventarc**: Buckets support GCP Eventarc triggers (`google.cloud.storage.object.v1.finalized`) using standard storage configuration.
+- **Dataflow (Apache Beam)**: Workers access raw and quarantine paths using regional service account credentials.
+- **Pub/Sub Notifications**: GCS supports linking notification configurations (`google_storage_notification`) directly to buckets, triggering messages on object changes.

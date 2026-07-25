@@ -33,3 +33,17 @@ variable "environment" {
     error_message = "The environment variable must be one of: dev, staging, prod."
   }
 }
+
+variable "owner" {
+  type        = string
+  default     = "data-platform-team"
+  nullable    = false
+  description = "The engineering team or department owner responsible for managing these resources."
+}
+
+variable "data_classification" {
+  type        = string
+  default     = "confidential"
+  nullable    = false
+  description = "The security classification of data stored in the GCS buckets (e.g. public, internal, confidential)."
+}

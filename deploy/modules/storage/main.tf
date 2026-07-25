@@ -1,22 +1,23 @@
 # Google Cloud Storage (GCS) resources configuration
 # Defines the application buckets (raw, archive, quarantine) and the dedicated Terraform state bucket.
+# Naming convention: ${var.project_id}-retailflow-${var.environment}-${purpose} to ensure global uniqueness.
 
 #-------------------------------------------------------------------------------
 # 1. Raw Ingestion Bucket
 # Holds daily raw POS CSV uploads before processing.
 #-------------------------------------------------------------------------------
 resource "google_storage_bucket" "raw" {
-  name          = "retailflow-${var.environment}-raw"
+  name          = "${var.project_id}-retailflow-${var.environment}-raw"
   location      = var.region
   force_destroy = var.force_destroy
 
-  storage_class               = "STANDARD"
+  storage_class               = "STANDARD" # Hot storage for nightly execution reads
   uniform_bucket_level_access = true
 
   public_access_prevention = "enforced"
 
   versioning {
-    enabled = false # No versioning required for raw ingest files (reduces cost overhead)
+    enabled = false # No versioning to save space on single-write POS logs
   }
 
   lifecycle_rule {
@@ -24,23 +25,28 @@ resource "google_storage_bucket" "raw" {
       type = "Delete"
     }
     condition {
-      age = 30 # Retain raw CSV files for 30 days before automatic deletion
+      age = 30 # Retain raw CSV uploads for 30 days before cleanup
     }
   }
 
-  labels = var.common_labels
+  labels = merge(var.common_labels, {
+    owner               = var.owner
+    data_classification = var.data_classification
+  })
 }
 
 #-------------------------------------------------------------------------------
 # 2. Archive Ingestion Bucket
-# Holds copies of successfully processed POS CSV logs.
+# Holds processed raw feeds for historical audit and replay scenarios.
 #-------------------------------------------------------------------------------
 resource "google_storage_bucket" "archive" {
-  name          = "retailflow-${var.environment}-archive"
+  name          = "${var.project_id}-retailflow-${var.environment}-archive"
   location      = var.region
   force_destroy = var.force_destroy
 
-  storage_class               = "STANDARD"
+  # NEARLINE storage class selected. Archives are written once daily but rarely read
+  # except in emergency recovery or verification re-run scenarios.
+  storage_class               = "NEARLINE" 
   uniform_bucket_level_access = true
 
   public_access_prevention = "enforced"
@@ -54,23 +60,26 @@ resource "google_storage_bucket" "archive" {
       type = "Delete"
     }
     condition {
-      age = 90 # Retain historical archives for 90 days before automatic deletion
+      age = 180 # Retain backups for 180 days (6 months operational window)
     }
   }
 
-  labels = var.common_labels
+  labels = merge(var.common_labels, {
+    owner               = var.owner
+    data_classification = var.data_classification
+  })
 }
 
 #-------------------------------------------------------------------------------
 # 3. Quarantine (Bad Records) Bucket
-# Holds quarantined invalid records and failure reports.
+# Holds quarantined invalid feeds and diagnostic validation scorecards.
 #-------------------------------------------------------------------------------
 resource "google_storage_bucket" "quarantine" {
-  name          = "retailflow-${var.environment}-quarantine"
+  name          = "${var.project_id}-retailflow-${var.environment}-quarantine"
   location      = var.region
   force_destroy = var.force_destroy
 
-  storage_class               = "STANDARD"
+  storage_class               = "STANDARD" # Hot access for active developer debugging
   uniform_bucket_level_access = true
 
   public_access_prevention = "enforced"
@@ -88,7 +97,10 @@ resource "google_storage_bucket" "quarantine" {
     }
   }
 
-  labels = var.common_labels
+  labels = merge(var.common_labels, {
+    owner               = var.owner
+    data_classification = var.data_classification
+  })
 }
 
 #-------------------------------------------------------------------------------
@@ -98,17 +110,17 @@ resource "google_storage_bucket" "quarantine" {
 # It is NOT part of the RetailFlow application ingestion data flow.
 #-------------------------------------------------------------------------------
 resource "google_storage_bucket" "tfstate" {
-  name          = "retailflow-${var.environment}-tfstate"
+  name          = "${var.project_id}-retailflow-${var.environment}-tfstate"
   location      = var.region
   force_destroy = var.force_destroy
 
-  storage_class               = "STANDARD"
+  storage_class               = "STANDARD" # Accessed frequently on plan/apply runs
   uniform_bucket_level_access = true
 
   public_access_prevention = "enforced"
 
   versioning {
-    enabled = true # Versioning enabled to protect against accidental state deletion or corruption
+    enabled = true # Versioning enabled to protect backend state files from corruption
   }
 
   lifecycle_rule {
@@ -121,6 +133,8 @@ resource "google_storage_bucket" "tfstate" {
   }
 
   labels = merge(var.common_labels, {
-    purpose = "terraform-state"
+    owner               = var.owner
+    data_classification = "confidential"
+    purpose             = "terraform-state"
   })
 }
