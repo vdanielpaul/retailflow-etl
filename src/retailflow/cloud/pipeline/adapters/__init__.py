@@ -10,8 +10,14 @@ from retailflow.cloud.pipeline.adapters.business_rule_adapter import (
     BusinessRuleAdapter,
     ValidationCheckResult,
 )
+from retailflow.cloud.pipeline.adapters.transformation_adapter import (
+    TransformationAdapter,
+    TransformationResult,
+)
 
 __all__ = [
     "BusinessRuleAdapter",
     "ValidationCheckResult",
+    "TransformationAdapter",
+    "TransformationResult",
 ]

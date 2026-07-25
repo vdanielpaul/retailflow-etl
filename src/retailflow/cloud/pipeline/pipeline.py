@@ -9,6 +9,7 @@ from retailflow.cloud.pipeline.options import RetailFlowPipelineOptions
 from retailflow.cloud.pipeline.dependencies import PipelineDependencyContainer
 from retailflow.cloud.pipeline.transforms.csv_parser import ParseAndCanonicalizeCsvFn, TAG_MALFORMED
 from retailflow.cloud.pipeline.transforms.validation_transform import ValidateSaleRecordFn, TAG_INVALID
+from retailflow.cloud.pipeline.transforms.transformation_transform import ApplyTransformationFn, TAG_TRANSFORM_ERROR
 
 logger = logging.getLogger("retailflow-pipeline-builder")
 
@@ -16,13 +17,14 @@ def build_pipeline(
     pipeline: beam.Pipeline,
     options: RetailFlowPipelineOptions,
     dependencies: PipelineDependencyContainer,
-) -> Tuple[beam.PCollection, beam.PCollection, beam.PCollection]:
+) -> Tuple[beam.PCollection, beam.PCollection, beam.PCollection, beam.PCollection]:
     """Assembles PTransforms onto the provided Beam pipeline graph context.
 
     Responsibilities:
       1. Read raw text lines from GCS (or local path for DirectRunner)
       2. Parse CSV rows and map to Canonical Data Model
       3. Apply business rule validation via BusinessRuleAdapter
+      4. Apply three-stage transformation via TransformationAdapter
 
     The caller (runner.py) is responsible for attaching I/O sinks (e.g.,
     WriteToText for quarantine output). build_pipeline() only constructs the
@@ -35,7 +37,8 @@ def build_pipeline(
 
     Returns:
         A tuple of:
-          - verified_sales: Records that passed all business rule checks.
+          - transformed_sales: Enriched records that passed all stages (→ Task 3.5 Silver load).
+          - transform_errors: Records that failed the transformation stage.
           - invalid_records: Records that failed business rule validation.
           - malformed_rows: Records that failed CSV parsing.
     """
@@ -87,15 +90,46 @@ def build_pipeline(
     verified_sales = validated_results["verified_sales"]
     invalid_records = validated_results[TAG_INVALID]
 
+# -------------------------------------------------------------------------
+    # Stage 4: Three-stage transformation via TransformationAdapter
+    #
+    # The ApplyTransformationFn delegates entirely to TransformationAdapter,
+    # which invokes clean_dataframe, normalize_dataframe, and enrich_sales_dataframe
+    # without modification. Stages 4–5 (surrogate keys, fact payload) are Task 3.5.
+    # -------------------------------------------------------------------------
+    transformation_results = (
+        verified_sales
+        | "Apply Transformation" >> beam.ParDo(
+            ApplyTransformationFn(
+                correlation_id=str(correlation_id),
+                run_id=dependencies.run_id,
+                filename=str(input_path),
+            )
+        ).with_outputs(TAG_TRANSFORM_ERROR, main="transformed_sales")
+    )
+
+    transformed_sales = transformation_results["transformed_sales"]
+    transform_errors = transformation_results[TAG_TRANSFORM_ERROR]
+
     # -------------------------------------------------------------------------
     # Operational statistics — logged per pipeline run for observability
     # -------------------------------------------------------------------------
     _ = (
-        verified_sales
-        | "Count Verified Sales" >> beam.combiners.Count.Globally()
-        | "Log Verified Count" >> beam.Map(
+        transformed_sales
+        | "Count Transformed Sales" >> beam.combiners.Count.Globally()
+        | "Log Transformed Count" >> beam.Map(
             lambda count: logger.info(
-                f"[Stage: VALIDATION] [Trace: {correlation_id}] {count} records passed business rule validation."
+                f"[Stage: TRANSFORMATION] [Trace: {correlation_id}] {count} records successfully transformed."
+            )
+        )
+    )
+
+    _ = (
+        transform_errors
+        | "Count Transform Errors" >> beam.combiners.Count.Globally()
+        | "Log Transform Error Count" >> beam.Map(
+            lambda count: logger.warning(
+                f"[Stage: TRANSFORMATION] [Trace: {correlation_id}] {count} records failed transformation."
             )
         )
     )
@@ -120,4 +154,4 @@ def build_pipeline(
         )
     )
 
-    return verified_sales, invalid_records, malformed_rows
+    return transformed_sales, transform_errors, invalid_records, malformed_rows

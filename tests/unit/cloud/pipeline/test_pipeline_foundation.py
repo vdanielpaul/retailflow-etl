@@ -54,11 +54,12 @@ def test_pipeline_graph_assembly():
     dependency_container = PipelineDependencyContainer("test-project", "test_metadata")
 
     pipeline = beam.Pipeline(options=options)
-    verified_sales, invalid_records, malformed_rows = build_pipeline(pipeline, custom_options, dependency_container)
+    transformed_sales, transform_errors, invalid_records, malformed_rows = build_pipeline(pipeline, custom_options, dependency_container)
 
-    # Assert all three PCollections are produced
+    # Assert all four PCollections are produced
     assert pipeline is not None
-    assert verified_sales is not None
+    assert transformed_sales is not None
+    assert transform_errors is not None
     assert invalid_records is not None
     assert malformed_rows is not None
 
@@ -93,7 +94,7 @@ def test_local_direct_runner_execution():
         deps = PipelineDependencyContainer("test-project", "test_metadata")
 
         pipeline = beam.Pipeline(options=options)
-        verified_sales, invalid_records, malformed_rows = build_pipeline(
+        transformed_sales, transform_errors, invalid_records, malformed_rows = build_pipeline(
             pipeline, custom_options, deps
         )
 
