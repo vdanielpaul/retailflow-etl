@@ -5,6 +5,8 @@ import tempfile
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from retailflow.cloud.pipeline.options import RetailFlowPipelineOptions
+from retailflow.cloud.pipeline.dependencies import PipelineDependencyContainer
+from retailflow.cloud.pipeline.pipeline import build_pipeline
 from retailflow.cloud.pipeline.runner import run
 
 def test_pipeline_options_argparse():
@@ -30,8 +32,29 @@ def test_pipeline_options_argparse():
     assert custom_options.environment.get() == "staging"
     assert options.get_all_options().get("project") == "test-project"
 
+def test_pipeline_graph_assembly():
+    """Verifies build_pipeline successfully maps graph transformations without throwing errors."""
+    args = [
+        "--input_file", "dummy.csv",
+        "--silver_dataset", "test_silver",
+        "--metadata_dataset", "test_metadata",
+        "--quarantine_bucket", "test-quarantine",
+        "--correlation_id", "corr-test",
+    ]
+
+    options = PipelineOptions(args)
+    custom_options = options.view_as(RetailFlowPipelineOptions)
+    dependency_container = PipelineDependencyContainer("test-project", "test_metadata")
+    
+    pipeline = beam.Pipeline(options=options)
+    build_pipeline(pipeline, custom_options, dependency_container)
+    
+    # Assert pipeline builds successfully without raising exceptions
+    assert pipeline is not None
+
+
 def test_local_direct_runner_execution():
-    """Verifies that the pipeline executes successfully on DirectRunner with local files."""
+    """Verifies that the runner executes successfully on DirectRunner with local files."""
     # Create temporary local mock data to act as input stream
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".csv", delete=False) as temp_file:
         temp_file.write("transaction_id,store_id,amount\n")
@@ -53,4 +76,3 @@ def test_local_direct_runner_execution():
         
         # Verify the pipeline completed in DONE state
         assert str(result.state) == "DONE"
-

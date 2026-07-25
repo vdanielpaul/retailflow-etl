@@ -1,20 +1,19 @@
-# Ingestion batch processing pipeline execution runner
+# Command-line CLI entrypoint for Dataflow Pipeline runner execution
 
 import sys
 import logging
+from typing import Any
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from retailflow.cloud.pipeline.options import RetailFlowPipelineOptions
 from retailflow.cloud.pipeline.dependencies import PipelineDependencyContainer
-
-from typing import Any
+from retailflow.cloud.pipeline.pipeline import build_pipeline
 
 def run(argv=None) -> Any:
-
-    """Builds and executes the Apache Beam batch processing pipeline.
+    """Invokes parsing of option parameters and triggers pipeline DAG execution.
 
     Args:
-        argv: Optional list of command-line argument strings.
+        argv: Optional CLI arguments list.
 
     Returns:
         The pipeline execution result.
@@ -23,19 +22,16 @@ def run(argv=None) -> Any:
     pipeline_options = PipelineOptions(argv)
     custom_options = pipeline_options.view_as(RetailFlowPipelineOptions)
 
-    # 2. Extract values from ValueProviders or parameters
-    # Note: ValueProvider values can only be accessed inside transforms at runtime,
-    # but standard options (like project or runner) can be read immediately.
+    # Configure logs
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logger = logging.getLogger("retailflow-runner")
+
+    # 2. Extract standard GCP parameters
     project_id = pipeline_options.get_all_options().get("project", "retailflow-dev-project")
     environment = custom_options.environment
     metadata_dataset = custom_options.metadata_dataset.get() if hasattr(custom_options.metadata_dataset, "get") else custom_options.metadata_dataset
-    
-    # Configure logs
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-    logger = logging.getLogger("retailflow-dataflow-pipeline")
-    logger.info(
-        f"Initializing pipeline execution. Project: {project_id}, Env: {environment}, Trace ID: {custom_options.correlation_id}"
-    )
+
+    logger.info(f"Runner entrypoint starting. Project context: {project_id}")
 
     # 3. Setup infrastructure dependencies
     dependency_container = PipelineDependencyContainer(
@@ -44,30 +40,16 @@ def run(argv=None) -> Any:
         environment=str(environment)
     )
 
-    # 4. Construct the Apache Beam pipeline
-    # DirectRunner or DataflowRunner is configured based on standard Beam options (--runner)
-    with beam.Pipeline(options=pipeline_options) as pipeline:
-        # Task 3.1: Scaffolding placeholder pipeline
-        # Reads the configured GCS raw input text file, counts rows, and logs completion
-        input_path = custom_options.input_file
-        
-        raw_rows = (
-            pipeline
-            | "Read Raw GCS File" >> beam.io.ReadFromText(input_path)
-            | "Filter Header" >> beam.Filter(lambda line: not line.startswith("transaction_id"))
-        )
-        
-        # Count pipeline element statistics (scaffolding check)
-        _ = (
-            raw_rows
-            | "Count Raw Elements" >> beam.combiners.Count.Globally()
-            | "Log Ingest Row Count" >> beam.Map(
-                lambda count: logger.info(f"Pipeline foundation verified. Found {count} rows in input stream.")
-            )
-        )
+    # 4. Construct and execute the Beam pipeline graph
+    pipeline = beam.Pipeline(options=pipeline_options)
+    build_pipeline(pipeline, custom_options, dependency_container)
 
-    logger.info("Pipeline execution complete.")
-    return pipeline.result
+    # Execute execution graph blocks synchronously
+    result = pipeline.run()
+    result.wait_until_finish()
+    
+    logger.info("Runner entrypoint execution finished.")
+    return result
 
 if __name__ == "__main__":
     run(sys.argv)
