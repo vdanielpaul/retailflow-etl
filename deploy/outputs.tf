@@ -26,19 +26,9 @@ output "raw_bucket_name" {
   description = "The name of the GCS raw ingestion bucket."
 }
 
-output "raw_bucket_url" {
-  value       = module.storage.raw_bucket_url
-  description = "The URL of the GCS raw ingestion bucket."
-}
-
 output "archive_bucket_name" {
   value       = module.storage.archive_bucket_name
   description = "The name of the GCS processed archive bucket."
-}
-
-output "archive_bucket_url" {
-  value       = module.storage.archive_bucket_url
-  description = "The URL of the GCS processed archive bucket."
 }
 
 output "quarantine_bucket_name" {
@@ -46,18 +36,7 @@ output "quarantine_bucket_name" {
   description = "The name of the GCS quarantine bucket."
 }
 
-output "quarantine_bucket_url" {
-  value       = module.storage.quarantine_bucket_url
-  description = "The URL of the GCS quarantine bucket."
-}
-
 output "tfstate_bucket_name" {
   value       = module.storage.tfstate_bucket_name
   description = "The name of the GCS dedicated Terraform state bucket."
 }
-
-output "tfstate_bucket_url" {
-  value       = module.storage.tfstate_bucket_url
-  description = "The URL of the GCS dedicated Terraform state bucket."
-}
-

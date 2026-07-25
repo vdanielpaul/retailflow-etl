@@ -33,16 +33,16 @@ variable "force_destroy" {
 
 variable "owner" {
   type        = string
-  default     = "data-platform-team"
+  default     = "unknown" # Default set to unknown; organizations must override via env tfvars.
   nullable    = false
   description = "The engineering team or department owner responsible for managing these resources."
 }
 
 variable "data_classification" {
   type        = string
-  default     = "confidential"
+  default     = "internal" # Default set to internal; can be overridden via variables or labels.
   nullable    = false
-  description = "The security classification of data stored in the GCS buckets (e.g. public, internal, confidential)."
+  description = "The default security classification of data stored in the GCS buckets."
 }
 
 variable "common_labels" {

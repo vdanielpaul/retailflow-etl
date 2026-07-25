@@ -30,12 +30,13 @@ Deploy the foundation layer of the serverless cloud data platform. This sets up 
   - `sql/bigquery/04_create_metadata.sql` (Audit and watermark table DDL)
 
 ### Detailed Task Breakdown
-1. **Task 1.1**: Set up the `deploy/` directory and configure the Terraform GCP provider.
-2. **Task 1.2**: Define GCS buckets with Object Lifecycle rules. This includes the application data buckets (`raw`, `archive`, `quarantine`) and the dedicated, infrastructure-only `tfstate` bootstrap bucket.
+1. **Task 1.1** [x]: Set up the `deploy/` directory and configure the Terraform GCP provider. (Completed)
+2. **Task 1.2** [x]: Define GCS buckets with Object Lifecycle rules. This includes the application data buckets (`raw`, `archive`, `quarantine`) and the dedicated, infrastructure-only `tfstate` bootstrap bucket. (Completed)
    * *Bootstrap State Migration (Separate Post-Apply Activity)*: After `tfstate` bucket is created, uncomment the remote backend config in `backend.tf` and run `terraform init -migrate-state` to migrate state.
 3. **Task 1.3**: Configure Terraform BigQuery datasets (`retailflow_bronze`, `retailflow_silver`, `retailflow_gold`, `retailflow_metadata`).
 4. **Task 1.4**: Define BigQuery DDL schema scripts for Bronze, Silver, Gold, and Metadata tables.
 5. **Task 1.5**: Execute schema deployment via script verification or Terraform BigQuery table resources.
+
 
 ### Deliverables
 - Three configured GCS application buckets: `raw-bucket`, `archive-bucket`, `quarantine-bucket`.
