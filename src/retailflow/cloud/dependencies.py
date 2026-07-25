@@ -3,7 +3,7 @@
 from typing import Optional
 from google.cloud import bigquery
 from retailflow.cloud.config.settings import CloudFunctionSettings
-from retailflow.cloud.repositories.watermark_repository import WatermarkRepository, BigQueryWatermarkRepository
+from retailflow.cloud.repositories.metadata_repository import MetadataRepository, BigQueryMetadataRepository
 from retailflow.cloud.services.event_publisher import EventPublisher, PubSubEventPublisher
 
 class IngestionDependencyContainer:
@@ -19,19 +19,20 @@ class IngestionDependencyContainer:
             try:
                 self.bq_client = bigquery.Client(project=self.settings.project_id)
             except Exception:
-                # Fallback to None in local testing environments without GCP authentication credentials
+                # Fallback to None in local testing environments without GCP credentials
                 self.bq_client = None
 
         # Instantiate repository adapter passing client dependency
         if self.bq_client is not None:
-            self.watermark_repository: WatermarkRepository = BigQueryWatermarkRepository(
+            self.metadata_repository: MetadataRepository = BigQueryMetadataRepository(
                 client=self.bq_client,
                 project_id=self.settings.project_id,
-                dataset_id=self.settings.metadata_dataset_id
+                dataset_id=self.settings.metadata_dataset_id,
+                environment=self.settings.environment
             )
         else:
             # Placeholder to prevent initialization crashes in test suites (overridden during test setups)
-            self.watermark_repository = None # type: ignore
+            self.metadata_repository = None # type: ignore
         
         # Instantiate publisher adapter
         self.event_publisher: EventPublisher = PubSubEventPublisher(

@@ -3,26 +3,33 @@
 import base64
 import json
 import pytest
+from datetime import datetime, timezone
 from retailflow.cloud.dependencies import IngestionDependencyContainer
 from retailflow.cloud.exceptions import InvalidEventError, DuplicateFileError
 from retailflow.cloud.handlers.event_handler import IngestEventHandler
 from retailflow.cloud.models.events import FileAcceptedEvent
-from retailflow.cloud.repositories.watermark_repository import WatermarkRepository
+from retailflow.cloud.repositories.metadata_repository import MetadataRepository
 from retailflow.cloud.services.event_publisher import EventPublisher
-from retailflow.cloud.repositories.models import WatermarkRecord, AuditRecord
+from retailflow.cloud.repositories.models import WatermarkRecord, AuditRecord, DuplicateLookupResult
 
 #-------------------------------------------------------------------------------
 # 1. Unit Test Mock Implementations (Isolated from production code)
 #-------------------------------------------------------------------------------
-class MockWatermarkRepository(WatermarkRepository):
-    """Test mock implementation for watermark database checks."""
+class MockMetadataRepository(MetadataRepository):
+    """Test mock implementation for metadata database checks."""
     def __init__(self, simulate_duplicate: bool = False) -> None:
         self.simulate_duplicate = simulate_duplicate
         self.registered_watermarks = []
         self.registered_audits = []
 
-    def exists(self, file_hash: str) -> bool:
-        return self.simulate_duplicate
+    def lookup_duplicate(self, file_hash: str) -> DuplicateLookupResult:
+        if self.simulate_duplicate:
+            return DuplicateLookupResult(
+                is_duplicate=True,
+                run_id="run-historic123",
+                ingested_at=datetime.now(timezone.utc)
+            )
+        return DuplicateLookupResult(is_duplicate=False)
 
     def create_watermark(self, record: WatermarkRecord) -> None:
         self.registered_watermarks.append(record)
@@ -42,18 +49,18 @@ class MockEventPublisher(EventPublisher):
 # 2. Pytest Fixtures
 #-------------------------------------------------------------------------------
 @pytest.fixture
-def mock_watermark_repository():
-    return MockWatermarkRepository(simulate_duplicate=False)
+def mock_metadata_repository():
+    return MockMetadataRepository(simulate_duplicate=False)
 
 @pytest.fixture
 def mock_event_publisher():
     return MockEventPublisher()
 
 @pytest.fixture
-def test_container(mock_watermark_repository, mock_event_publisher):
+def test_container(mock_metadata_repository, mock_event_publisher):
     """Initializes dependency container and overrides concrete adapters with mock services."""
     container = IngestionDependencyContainer()
-    container.watermark_repository = mock_watermark_repository
+    container.metadata_repository = mock_metadata_repository
     container.event_publisher = mock_event_publisher
     return container
 
@@ -97,11 +104,10 @@ def test_handler_parses_valid_payload(test_container, mock_pubsub_message):
     assert result["file_hash"].startswith("hash-")
 
     # Verify mock repository audits & watermarks
-    assert len(test_container.watermark_repository.registered_watermarks) == 1
-    assert len(test_container.watermark_repository.registered_audits) == 2 # INGESTING, INGESTED success
-    assert test_container.watermark_repository.registered_audits[0].status == "INGESTING"
-    assert test_container.watermark_repository.registered_audits[1].status == "INGESTED"
-
+    assert len(test_container.metadata_repository.registered_watermarks) == 1
+    assert len(test_container.metadata_repository.registered_audits) == 2 # INGESTING, INGESTED success
+    assert test_container.metadata_repository.registered_audits[0].status == "INGESTING"
+    assert test_container.metadata_repository.registered_audits[1].status == "INGESTED"
 
     # Verify mock publisher was called
     assert len(test_container.event_publisher.published_events) == 1
@@ -152,13 +158,13 @@ def test_handler_rejects_missing_schema_properties(test_container):
 
 def test_duplicate_file_throws_exception(test_container, mock_pubsub_message):
     """Verifies that watermark duplicates trigger DuplicateFileError and stop flow."""
-    test_container.watermark_repository.simulate_duplicate = True
+    test_container.metadata_repository.simulate_duplicate = True
     handler = IngestEventHandler(test_container)
     
     with pytest.raises(DuplicateFileError, match="Duplicate file hash detected"):
         handler.handle_ingestion_message(mock_pubsub_message["message"])
 
     # Verify no watermark created and no events published
-    assert len(test_container.watermark_repository.registered_watermarks) == 0
+    assert len(test_container.metadata_repository.registered_watermarks) == 0
     assert len(test_container.event_publisher.published_events) == 0
-    assert test_container.watermark_repository.registered_audits[-1].status == "REJECTED_DUPLICATE"
+    assert test_container.metadata_repository.registered_audits[-1].status == "REJECTED_DUPLICATE"

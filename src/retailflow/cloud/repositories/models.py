@@ -4,6 +4,12 @@ from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel, Field
 
+class DuplicateLookupResult(BaseModel):
+    """Encapsulates duplicate query checks with historical tracing metadata."""
+    is_duplicate: bool = Field(..., description="True if a matching hash already exists.")
+    run_id: Optional[str] = Field(default=None, description="The historical execution run ID that ingested the file.")
+    ingested_at: Optional[datetime] = Field(default=None, description="The timestamp tracking when the matching file was processed.")
+
 class WatermarkRecord(BaseModel):
     """Domain model representing a file watermark database record."""
     file_hash: str = Field(..., description="The calculated SHA-256 hash of the ingested file.")

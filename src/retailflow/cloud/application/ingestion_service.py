@@ -17,7 +17,7 @@ class IngestionApplicationService:
 
     def __init__(self, container: IngestionDependencyContainer) -> None:
         self.settings = container.settings
-        self.watermark_repository = container.watermark_repository
+        self.metadata_repository = container.metadata_repository
         self.event_publisher = container.event_publisher
 
     def process_file_upload(self, gcs_event: GcsNotificationPayload, correlation_id: str) -> dict[str, Any]:
@@ -56,21 +56,24 @@ class IngestionApplicationService:
             duration_ms=0,
             error_message=None
         )
-        self.watermark_repository.record_audit(audit_init)
+        self.metadata_repository.record_audit(audit_init)
 
         # 1. Calculate File Hashing (Task 2.3 Placeholder)
         # Mock file hash for scaffolding validation
         mock_file_hash = f"hash-{uuid.uuid4().hex[:12]}"
         
         # 2. Duplicate Detection
-        if self.watermark_repository.exists(mock_file_hash):
+        duplicate_check = self.metadata_repository.lookup_duplicate(mock_file_hash)
+        if duplicate_check.is_duplicate:
             logger.warning(
-                f"Duplicate upload detected. Rejecting file processing: gs://{gcs_event.bucket}/{gcs_event.name}",
+                f"Duplicate upload detected. Rejecting file processing: gs://{gcs_event.bucket}/{gcs_event.name}. "
+                f"Historically processed in run {duplicate_check.run_id} at {duplicate_check.ingested_at}",
                 extra={"extra_fields": {
                     "correlation_id": correlation_id,
                     "ingestion_id": run_id,
                     "file_hash": mock_file_hash,
-                    "event_type": "FILE_DUPLICATE_REJECTED"
+                    "event_type": "FILE_DUPLICATE_REJECTED",
+                    "duplicate_of_run": duplicate_check.run_id
                 }}
             )
             audit_fail = AuditRecord(
@@ -78,7 +81,7 @@ class IngestionApplicationService:
                 status="REJECTED_DUPLICATE",
                 error_message=f"Duplicate file hash detected: {mock_file_hash}"
             )
-            self.watermark_repository.record_audit(audit_fail)
+            self.metadata_repository.record_audit(audit_fail)
             raise DuplicateFileError(f"Duplicate file hash detected: {mock_file_hash}")
 
         # 3. Register Watermark Ingestion
@@ -87,7 +90,7 @@ class IngestionApplicationService:
             filename=gcs_event.name,
             run_id=run_id
         )
-        self.watermark_repository.create_watermark(watermark_rec)
+        self.metadata_repository.create_watermark(watermark_rec)
 
         # 4. Construct Structured Event Contract Payload
         accepted_event = FileAcceptedEvent(
@@ -110,9 +113,9 @@ class IngestionApplicationService:
         audit_success = AuditRecord(
             run_id=run_id,
             status="INGESTED",
-            duration_ms=100 # Scaffolding default
+            duration_ms=100
         )
-        self.watermark_repository.record_audit(audit_success)
+        self.metadata_repository.record_audit(audit_success)
 
         logger.info(
             f"File accepted and trigger event successfully forwarded downstream for: gs://{gcs_event.bucket}/{gcs_event.name}",
