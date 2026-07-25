@@ -1,6 +1,7 @@
 # RetailFlow ETL v2.0 — Cloud-Native Modernization Design
+## Document Version: Architecture Baseline v1.0 (FROZEN)
 
-This document serves as the authoritative technical design and migration specification for modernizing the RetailFlow ETL v1.0 single-node pipeline into a serverless, cloud-native data platform on Google Cloud Platform (GCP).
+This document serves as the official, frozen architectural baseline for modernizing the RetailFlow ETL v1.0 single-node pipeline into a serverless, cloud-native data platform on Google Cloud Platform (GCP).
 
 ---
 
@@ -34,366 +35,296 @@ This document serves as the authoritative technical design and migration specifi
 
 ---
 
-## 2. Current vs Target Architecture
+## 2. Logical Architecture Layers
 
-### Current v1.0 Architecture (Single-Node PostgreSQL)
+To preserve the modularity of the project and prevent it from becoming Beam-centric, we define a strict separation of layers. The execution engine (Beam) is decoupled from the core business rules:
+
 ```text
-[Daily POS CSVs] 
-       │
-       ▼
- [data/raw/ Folder] 
-       │
-       ▼
- [Local Cron CLI] ──(Check SHA-256 Hash)──> [metadata.etl_watermark]
-       │
-       ▼
- [Validation Engine] ──(Bad Rows)──> [data/bad_records/ Folder]
-       │ (Clean Rows)
-       ▼
- [Pandas Transformation] ──(In-Memory Keys Cache)──> [dim_product / dim_store / dim_employee]
-       │
-       ▼
- [PostgreSQL COPY Ingestion] ──(Single Transaction Scope)
-       │
-       ▼
- [(PostgreSQL retailflow_dw Database)]
+┌────────────────────────────────────────────────────────┐
+│               1. Cloud Infrastructure                  │
+│  - Terraform  - Cloud Scheduler  - Service Accounts   │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│               2. Execution Engine (Beam)               │
+│  - Dataflow Runner  - Pipeline DAG  - PCollections     │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                3. Application Layer                    │
+│  - PipelineContext  - Storage Adapters  - Loader Ports │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                4. Business Logic Layer                 │
+│  - Cleaner  - Normalizer  - Validator  - Enricher      │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                5. Shared Domain Models                 │
+│  - Pydantic CDM schemas (CanonicalSale, etc.)          │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                     6. Utilities                       │
+│  - YAML Config Parser  - JSON Logger  - Redactor       │
+└────────────────────────────────────────────────────────┘
 ```
 
-### Target v2.0 Architecture (Cloud-Native GCP)
-```text
-[Daily POS CSVs] 
-       │
-       ▼
-[Cloud Storage (raw-bucket)]
-       │ (Object Created Event)
-       ▼
-[Cloud Function (Orchestrator)] ──(Evaluate Hash)──> [BigQuery metadata.etl_watermark]
-       │ (Publish Ingest Event)
-       ▼
-[Cloud Pub/Sub (ingest-topic)]
-       │ (Trigger Job)
-       ▼
-[Cloud Dataflow (Apache Beam)] ──(Bad Rows)──> [Cloud Storage (quarantine-bucket)]
-       │ (Execute Pandas Clean/Transform/Enrich)
-       ▼
-[BigQuery Ingestion API] ──(Atomic Write Load Job)
-       │
-       ▼
-[(Google BigQuery Warehouse: datasets bronze, silver, gold)]
-       │
-    [Cloud Logging & Cloud Monitoring & Alerts]
+- **Core Rule**: Business logic must remain pure-Python and must never import or depend directly on the Apache Beam SDK. Beam acts strictly as a distributed execution wrapper that calls the application and business logic layers.
+
+---
+
+## 3. Storage & Database Abstractions
+
+### 1. Storage Abstraction
+To isolate the pipeline from direct GCS SDK calls and support future multi-cloud storage backends, we define a `StorageProvider` interface:
+
+```python
+class StorageProvider(ABC):
+    @abstractmethod
+    def read_file(self, path: str) -> bytes:
+        pass
+
+    @abstractmethod
+    def write_file(self, path: str, data: bytes) -> None:
+        pass
+
+    @abstractmethod
+    def move_file(self, src: str, dest: str) -> None:
+        pass
 ```
 
----
+- **`LocalStorageProvider`**: Implements local path operations for testing and development.
+- **`GCSStorageProvider`**: Implements GCS blob operations using `google-cloud-storage`.
 
-## 3. GCP Service Mapping
+### 2. Warehouse Abstraction
+To decouple target loads from specific analytical databases, we define a `WarehouseClient` interface:
 
-| Current v1.0 Component | Target v2.0 GCP Equivalent | Architectural Rationale for Decision |
-|---|---|---|
-| **Local Folder (`data/raw/`)** | **Cloud Storage (Raw Bucket)** | Provides secure, durable, serverless object storage that triggers events upon file uploads. |
-| **Local Folder (`data/bad_records/`)**| **Cloud Storage (Quarantine Bucket)**| Securely stores rejected records and validation reports in cloud object storage. |
-| **CLI Execution (`cli.py`)** | **Cloud Function (Orchestrator)** | Triggered by Cloud Storage events. Inspects file metadata, runs health checks, checks watermarks, and kicks off downstream jobs. |
-| **Cron Scheduling** | **Cloud Scheduler** | Standard serverless cron manager used to trigger cleanup tasks and daily telemetry alerts. |
-| **PostgreSQL Database** | **Google BigQuery** | Serverless, highly scalable analytical column-store warehouse. Eliminates write locks and scales to petabytes automatically. |
-| **Local Logs (`logs/`)** | **Cloud Logging** | Consolidates application output logs. Integrates with Log Router and Alert Policies. |
-| **Metrics Collector** | **Cloud Monitoring** | Tracks pipeline stage latency metrics, failure metrics, and counts. Exposes dashboards. |
-| **Watermark & Audit Tables** | **BigQuery Metadata Dataset** | Watermark and audit log tables are stored inside a dedicated metadata dataset in BigQuery. |
-| **Environment Configs (`.yaml`)** | **Secret Manager & Environment Vars**| Database hosts and parameters are loaded via environment variables; credentials are loaded from Secret Manager. |
+```python
+class WarehouseClient(ABC):
+    @abstractmethod
+    def execute_query(self, query: str, params: dict | None = None) -> list[dict]:
+        pass
 
----
-
-## 4. Dataflow Design & Code Reuse (Option A)
-
-### Framework-Agnostic Extraction
-We reject the approach of wrapping the legacy Pandas validation engine inside Beam workers because it introduces local filesystem dependencies and limits Beam's distributed execution scaling.
-
-Instead, we select **Option A**:
-- **Apache Beam** acts as the distributed execution and orchestration engine.
-- Reusable, pure-Python logic from v1.0 (`cleaner`, `normalizer`, `enricher`, and validation rules) is extracted from Pandas-specific containers into framework-agnostic helper functions that operate on row dictionaries (`dict[str, Any]`).
-- These helper functions are executed inside Beam `ParDo` transforms.
-
-```text
-               Apache Beam Execution (Dataflow)
-                              │
-            ┌─────────────────┴─────────────────┐
-            ▼                                   ▼
- [Read GCS File]                       [Map Row Elements]
-            │                                   │
-            ▼                                   ▼
- [ParDo(ValidateRowFn)]                [ParDo(TransformRowFn)]
-  Calls helper functions                Calls clean/normalizer helpers
-  - Checks quantity > 0                 - Lowercases emails
-  - Checks price >= 0                   - Rounds unit price to 2 decimals
-            │                                   │
-            ▼                                   ▼
- [Output PCollection]                  [Output PCollection]
-  Split clean vs invalid                Ready for BigQuery Ingestion
+    @abstractmethod
+    def load_dataframe(self, df: pd.DataFrame, table: str, write_disposition: str) -> None:
+        pass
 ```
 
----
-
-## 5. Medallion Data Flow & BigQuery Architecture
-
-To establish a strict Medallion architecture, data moves sequentially through three BigQuery datasets:
-
-```text
-[GCS Raw CSV File]
-       │
-       ▼
-[BigQuery bronze.sales_raw] ──(Append-Only Raw Records with metadata)
-       │
-       ▼ (Dataflow Validation & Normalization)
-       │
-[BigQuery silver.sales_canonical] ──(Cleaned Schema-Enforced CDM Rows)
-       │
-       ▼ (BigQuery SQL Merges & JOINs)
-       │
-[BigQuery gold.fact_sales] ──(Dimension Surrogate Keys Resolved)
-```
-
-1. **Bronze Dataset (`bronze.sales_raw`)**:
-   - Represents the raw, immutable ingest layer.
-   - Contains raw string payload records loaded directly from GCS, appended with `ingestion_timestamp` and `source_filename`.
-2. **Silver Dataset (`silver.sales_canonical`)**:
-   - Represents validated, cleaned, and schema-enforced records.
-   - Corresponds directly to the **Canonical Data Model** (CDM).
-3. **Gold Dataset (`gold.fact_sales`)**:
-   - Represents the dimensional warehouse layer.
-   - Data is joined with Gold dimension tables (`dim_customer`, `dim_product`, `dim_store`) to resolve surrogate keys.
+- **`PostgresWarehouse`**: Implements the legacy loading logic.
+- **`BigQueryWarehouse`**: Implements loading via the Google Cloud BigQuery client library.
 
 ---
 
-## 6. BigQuery Write Strategy Comparison
+## 4. Operational Watermark Strategy Review
 
-We compare the three primary database loading options to select the optimal write strategy for daily batch retail feeds:
+We re-evaluated the watermark storage mechanism to choose between Firestore and BigQuery:
 
-| Ingestion Method | Latency Profile | Write Cost | Transaction Support | Recommendation |
-|---|---|---|---|---|
-| **BigQuery Load Jobs** | Batch (Minutes) | **Free** (Unlimited daily slots) | Atomic table-level replacement | **Recommended** |
-| **Storage Write API** | High-throughput stream | Pay-per-GB written | Stream-level commits | Exceeded for batch scale |
-| **Streaming Inserts** | Real-time (Seconds) | Pay-per-row written | Row-level consistency | Exceeded for batch scale |
-
-### Selection Rationale
-- We select **BigQuery Load Jobs** in batch write mode. Since daily retail store sales are exported as batch files overnight, real-time streaming is not required. BigQuery Load Jobs are **free of ingestion cost**, support automatic schema auto-detection, and provide robust atomic table-level write boundaries.
+- **Option A: Google Cloud Firestore (Deferred)**: Adds another serverless service to provision, learn, and manage. Unnecessary given our daily batch ingestion volume.
+- **Option B: BigQuery Metadata Table (Selected)**: Since BigQuery already acts as our analytical warehouse, keeping watermark and audit log tables in a dedicated `metadata.etl_watermark` table in BigQuery simplifies the architecture and is highly defensible in interviews:
+  
+> *"We already used BigQuery as our analytical warehouse, so we kept operational metadata there to reduce architectural complexity."*
 
 ---
 
-## 7. Watermark State Storage Comparison
+## 5. Medallion Dataset Flow & BigQuery Write Strategy
 
-We evaluate where to store pipeline watermark timestamps and file hashes:
+### Medallion Layers Trade-Off Analysis
 
-| Storage Backend | Read/Write Latency | Operational Cost | Concurrency Control | Recommendation |
-|---|---|---|---|---|
-| **BigQuery Table** | High (2-3 seconds) | Scan costs per query | No locking mechanisms | Exceeded for watermarks |
-| **Google Cloud SQL** | Low (Millisecond) | High (Requires dedicated VM) | ACID database locks | Over-engineered |
-| **Cloud Firestore** | **Extremely Low** | **Free Tier** (10k writes/day) | Document-level transactions | **Recommended** |
+| Option | Pros | Cons | Recommendation |
+|---|---|---|---|
+| **Option A (Files Only)** | Lower BigQuery storage costs. | Cannot query raw messages directly in SQL. | Not recommended |
+| **Option B (Files + BQ)** | True Medallion auditability; enables raw replay directly in SQL. | Minor storage cost increase. | **Selected** |
 
-### Selection Rationale
-- We select **Google Cloud Firestore** (in Datastore mode) for high-watermark state storage. Firestore is a serverless, highly available NoSQL database that offers sub-millisecond document lookups. It provides atomic transaction locks to prevent concurrency conflicts when multiple store files are uploaded simultaneously, and easily fits within GCP's free usage tier for batch scale.
+We select **Option B**. Every raw CSV file is stored in `gs://raw-bucket/` AND appended directly to `bronze.sales_raw` as a raw payload string with ingestion metadata.
+
+### BigQuery Write Strategy
+- **Selected Method**: **BigQuery Load Jobs** using the file-append configuration.
+- **Rationale**: Since daily store sales are exported as batch files overnight, real-time streaming is not required. BigQuery Load Jobs are **free of ingestion cost**, support schema auto-detection, and provide robust atomic table-level write boundaries.
 
 ---
 
-## 8. Cloud Function & Dataflow Responsibilities
+## 6. BigQuery Transformation & Loading Strategy
 
-To keep Cloud Functions thin and avoid running business logic inside triggers, responsibilities are split:
+We compare two processing topologies:
 
-```text
- ┌────────────────────────────────────────────────────────┐
- │ Cloud Function: Ingest Orchestrator (Thin Trigger)     │
- ├────────────────────────────────────────────────────────┤
- │ - GCS object finalized trigger detection               │
- │ - File metadata validation (size > 0, suffix validation)│
- │ - Calculate SHA-256 file content hash                  │
- │ - Query Firestore to check for duplicate file hashes   │
- │ - Publish trigger event message to Pub/Sub             │
- └──────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
- ┌────────────────────────────────────────────────────────┐
- │ Cloud Dataflow Engine (Apache Beam Distributed Runner)  │
- ├────────────────────────────────────────────────────────┤
- │ - Read raw CSV lines from GCS bucket                   │
- │ - Execute framework-agnostic row validation rules      │
- │ - Write rejected rows to GCS quarantine bucket        │
- │ - Normalize validated records into Canonical CDM format│
- │ - Compute financial sales metric derivations           │
- │ - Trigger BigQuery Load Job to ingest bronze dataset   │
- └────────────────────────────────────────────────────────┘
+- **Option A (Selected - ELT Model)**:
+  - **Dataflow** reads from GCS, runs validation checks, normalizes data to the CDM, and writes the clean output to the `silver` dataset in BigQuery.
+  - **BigQuery SQL MERGE** executes joins against Gold dimension tables to resolve surrogate keys and loads the final facts into `gold.fact_sales`.
+  - **Rationale**: This is the standard enterprise ELT pattern. It keeps Dataflow focused solely on stateless row validations and cleaning, while utilizing BigQuery's query engine to perform relational joins.
+
+- **Option B (ETL Model)**:
+  - Dataflow performs validation, transformations, database lookups for surrogate keys, and writes directly to `gold.fact_sales`.
+  - **Rationale**: High Dataflow worker memory overhead due to caching dimension tables locally.
+
+---
+
+## 7. Cloud Function & Dataflow Responsibilities
+
+### Ingest Orchestrator (Cloud Function)
+- GCS raw file detection trigger (`google.storage.object.finalize`).
+- Verify file size > 0.
+- Calculate file SHA-256 hash.
+- Query BigQuery `metadata.etl_watermark` for duplicate hash detection.
+- Publish trigger event to Pub/Sub.
+- structured logging.
+
+### Dataflow Execution (Apache Beam)
+- Read raw CSV rows from GCS.
+- Execute validation checks using framework-agnostic business rules.
+- Write quarantined records to `gs://quarantine-bucket/`.
+- Format and write clean canonical records to `silver.sales_canonical` using BigQuery Load Jobs.
+- Log operational execution metrics to Cloud Logging.
+
+---
+
+## 8. Target System Architecture
+
+```mermaid
+flowchart TD
+    StoreCSV[POS Daily CSV Feed] -->|Upload| GCS_Raw[Cloud Storage: raw-bucket]
+    GCS_Raw -->|Object Created Event| CF_Orch[Cloud Function: Ingestion Orchestrator]
+
+    SecretMgr[Secret Manager] -->|Resolve Credentials| CF_Orch
+    CF_Orch -->|Verify File Hash| BQ_Meta[(BigQuery: metadata.etl_watermark)]
+
+    CF_Orch -->|Publish Ingest Event| PubSub[Pub/Sub: Ingestion Topic]
+    PubSub -->|Trigger Apache Beam Job| Dataflow[Cloud Dataflow Engine]
+
+    Dataflow -->|Read Raw File| GCS_Raw
+    Dataflow -->|Execute Data Quality Engine| Dataflow
+
+    Dataflow -- Invalid Rows --> GCS_Quarantine[Cloud Storage: quarantine-bucket]
+    Dataflow -- Valid CDM Rows --> BQ_Silver[(BigQuery: silver.sales_canonical)]
+
+    BQ_Silver -->|SQL MERGE Join| BQ_Gold[(BigQuery: gold.fact_sales)]
+    Dataflow -->|Update Audit Logs| BQ_Meta
 ```
 
 ---
 
-## 9. Surrogate Key Resolution Design
+## 9. BigQuery Modeling Details
 
-We compare options for resolving natural keys (`store_id`, `product_id`) into warehouse keys (`store_sk`, `product_sk`) at scale:
-
-| Key Resolution Option | CPU Overhead | Memory Overhead | Network Latency | Recommendation |
-|---|---|---|---|---|
-| **Dataflow Side Inputs** | Low | High (Loads entire dim to RAM) | None | Exceeded for large dims |
-| **Beam external lookups**| High | Low | High (Row-level DB queries) | Not recommended |
-| **BigQuery SQL JOIN** | **Extremely Low** | **None** | None (Executes in BQ engine) | **Recommended** |
-
-### Selection Rationale
-- We select **BigQuery SQL JOIN** executed during the Silver-to-Gold database execution step. By executing key mapping in BigQuery, we eliminate loading large dimension tables into Dataflow worker memory, optimize BigQuery's distributed join architecture, and keep Dataflow workers focused solely on validation and cleaning.
-
----
-
-## 10. Repository Evolution Layout
-
-The repository evolves from v1.0 without losing its modularity. Legacy business logic remains reusable for local execution, while cloud infrastructure and Beam pipelines are isolated:
-
-```text
-retailflow-etl/
-├── config/                  # Environment YAML profiles (local, development, production)
-├── deploy/                  # Terraform IaC configurations
-│   ├── main.tf              # Main resources provider
-│   ├── gcs.tf               # Cloud Storage buckets setup
-│   ├── bigquery.tf          # BigQuery datasets & schemas setup
-│   ├── pubsub.tf            # Pub/Sub topics configuration
-│   └── secrets.tf           # Secret Manager parameters
-├── src/retailflow/          # Main application package
-│   ├── functions/           # Cloud Functions source code
-│   │   ├── orchestrator/    # entry point for storage trigger function
-│   │   └── main.py          # Trigger handler
-│   ├── pipeline/            # Reusable core pipeline libraries
-│   │   ├── beam_pipeline.py # Apache Beam Dataflow pipeline definition
-│   │   ├── validation.py    # Reusable validator components
-│   │   └── transformation.py# Reusable transform cleaner/enricher rules
-│   ├── database/            # BigQuery client wrapper
-│   │   └── bigquery_client.py
-│   ├── loader/              # BigQuery data loaders
-│   │   └── bq_loader.py     # Writes tables using load jobs
-│   └── audit/               # BigQuery metadata audit publishers
-├── sql/                     # BigQuery DDL schema scripts
-│   └── bigquery/            # BigQuery DDL setup files
-├── tests/                   # Reusable Pytest suite
-└── pyproject.toml
-```
-
----
-
-## 11. BigQuery Modeling Details
-
-### Dataset Naming
-- `retailflow_bronze`: Staging dataset for raw ingestion tables.
-- `retailflow_silver`: Validated canonical database tables.
-- `retailflow_gold`: Dimensional star schema tables.
-- `retailflow_metadata`: Watermarks and audit execution databases.
-
-### Table Naming
-- Fact Table: `retailflow_gold.fact_sales`
-- Dimension Tables: `retailflow_gold.dim_customer`, `retailflow_gold.dim_product`, `retailflow_gold.dim_store`, `retailflow_gold.dim_employee`, `retailflow_gold.dim_date`
-
-### Audit & Partitioning Parameters
-- `ingestion_timestamp`: UTC timestamp tracking when the row entered BigQuery.
-- `source_filename`: Name of the source feed file.
-- `audit_run_id`: Run ID tracking the pipeline execution instance.
+- **Bronze Dataset**: `retailflow_bronze`
+  - Tables: `sales_raw` (immutable raw payloads, 30-day partition expiration policy).
+- **Silver Dataset**: `retailflow_silver`
+  - Tables: `sales_canonical` (CDM schemas).
+- **Gold Dataset**: `retailflow_gold`
+  - Tables: `dim_customer`, `dim_product`, `dim_store`, `dim_employee`, `dim_date`, `fact_sales`.
+- **Metadata Dataset**: `retailflow_metadata`
+  - Tables: `etl_watermark`, `etl_audit_log`.
 - **Partitioning**: `fact_sales` partitioned by day on `transaction_time`.
 - **Clustering**: `fact_sales` clustered on `store_sk` and `product_sk`.
+- **Audit Columns**: `ingestion_timestamp` (TIMESTAMP), `source_filename` (STRING), `audit_run_id` (STRING).
+- **Schema Evolution**: Set `schema_update_option = ALLOW_FIELD_ADDITION` to support backward-compatible updates.
 
-### Schema Evolution Strategy
-- Additions of columns are allowed (`schema_update_option = ALLOW_FIELD_ADDITION`). Reductions or type changes require deploying a new target table version and running a migration script.
+---
+
+## 10. Logging & Observability Strategy
+
+- **Application Logs**: Standard JSON structured output is captured by Cloud Logging.
+- **Audit Logs**: Pipeline execution timelines, row counts, and status changes are written to `retailflow_metadata.etl_audit_log`.
+- **Pipeline Metrics**: Latency metrics and row reject counts are sent to Cloud Monitoring as custom metrics.
+- **Infrastructure Logs**: Cloud Audit Logs track GCS file uploads and BigQuery write job operations.
+
+---
+
+## 11. Testing & Local Development Strategy
+
+### Test Hierarchy
+- **Unit Tests**: Run locally; verify validation and transformation rules in isolation.
+- **Integration Tests**: Run in CI; mock GCS and BigQuery APIs using unittest mocks.
+- **DirectRunner Tests**: Run locally; verify Apache Beam transforms using Beam's `TestPipeline` wrapper.
+- **Cloud Integration Tests**: Run in a pre-production sandbox to verify IAM service account credentials.
+- **End-to-End Tests**: Run in a sandbox environment; trigger CF -> Pub/Sub -> Dataflow -> BigQuery flows.
+
+### Local Development Setup
+- **Beam DirectRunner**: Run Apache Beam pipelines locally using `DirectRunner` to read and write local files.
+- **Local Emulator**: Use the `google-cloud-sdk` emulator to run mock GCS and BigQuery APIs locally.
+- **Environment Variables**:
+  ```powershell
+  $env:STORAGE_PROVIDER="local"
+  $env:WAREHOUSE_BACKEND="postgres"
+  ```
 
 ---
 
 ## 12. Terraform Managed Infrastructure
 
-All GCP resources are managed via **Terraform**:
-- **Storage Buckets**: `raw-bucket`, `archive-bucket`, `quarantine-bucket` (with Object Lifecycle policies).
-- **BigQuery Datasets**: `bronze`, `silver`, `gold`, `metadata`.
-- **Pub/Sub Topics**: `ingestion-trigger-topic` and subscriptions.
-- **Service Accounts**: `sa-orchestrator` and `sa-dataflow-worker` with minimal IAM roles.
-- **Secret Manager**: Secret variables for system credentials.
-- **Cloud Monitoring**: Alert Policies and dashboard views.
+Terraform manages:
+- **GCS Buckets**: `raw-bucket`, `archive-bucket`, `quarantine-bucket`.
+- **BigQuery Datasets**: `retailflow_bronze`, `retailflow_silver`, `retailflow_gold`, `retailflow_metadata`.
+- **Pub/Sub**: Ingestion topics and Dataflow push subscriptions.
+- **IAM**: Service accounts `sa-orchestrator` and `sa-dataflow-worker` with minimal roles.
+- **Monitoring**: Alert policies for failed Dataflow jobs.
 
 ---
 
 ## 13. CI/CD Pipeline Design
 
-We configure a serverless build and deployment lifecycle using **GitHub Actions**:
-
-```text
-                        GitHub Actions Pipeline
-                                   │
-                 ┌─────────────────┴─────────────────┐
-                 ▼                                   ▼
-        [Test & Static Analysis]            [Terraform Deployment]
-                 │                                   │
-                 ▼                                   ▼
-        - Run ruff/mypy checks              - Plan infrastructure changes
-        - Run Pytest suites                 - Apply configuration to GCP
-                 │                                   │
-                 └─────────────────┬─────────────────┘
-                                   ▼
-                     [GCP Application Deployment]
-                                   │
-                                   ▼
-                    - Build Cloud Function archive
-                    - Deploy code to Cloud Functions
-```
-
-### Rollback Strategy
-- **Infrastructure**: If a Terraform apply step fails, run `terraform destroy` or roll back to the last stable configuration commit.
-- **Application Code**: Deploy previous stable Cloud Function zip archives from GCS using automated version tagging.
+### Build & Deploy Workflow (GitHub Actions)
+- **Infrastructure Branch**: Staging/production infrastructure changes require `terraform plan` approval before running `terraform apply`.
+- **Application Branch**: Builds Cloud Function zip archives, runs unit tests, and deploys code to Cloud Functions.
+- **Rollback Strategy**: Revert to the previous git commit hash, which triggers GitHub Actions to redeploy the previous Cloud Function package version.
 
 ---
 
-## 14. Development Roadmap & Milestones
-
-The implementation of RetailFlow ETL v2.0 is structured into **5 sequential development milestones**. Each milestone must be built in a dedicated feature branch off the `develop` branch, tested in isolation, and merged back into `develop` via a Pull Request.
+## 14. Repository Layout
 
 ```text
-                          [develop branch]
-                                 │
-           ┌─────────────────────┼─────────────────────┐
-           ▼ (Feature Branch)    ▼ (Feature Branch)    ▼ (Feature Branch)
-     [milestone-1]         [milestone-2]         [milestone-3]
-     Infra & Storage       Ingest Trigger        Dataflow Pipeline
-           │                     │                     │
-           ▼ (Merge PR)          ▼ (Merge PR)          ▼ (Merge PR)
-     [develop branch] ───> [develop branch] ───> [develop branch]
+retailflow-etl/
+├── config/                  # Environment configurations
+├── deploy/                  # Terraform configurations
+├── docs/                    # Architecture documentation & ADRs
+├── sql/                     # BigQuery SQL & DDL setup files
+├── src/retailflow/          # Main application package
+│   ├── domain/              # Shared models & CDM schemas
+│   ├── application/         # Core business logic & transformation rules
+│   ├── adapters/            # StorageProvider & WarehouseClient implementations
+│   ├── cloud/               # Cloud Function trigger entry point
+│   ├── beam/                # Apache Beam pipeline transforms
+│   └── utils/               # Structured logging & configuration
+├── tests/                   # Test suite
+└── pyproject.toml
 ```
-
-### Milestone 1: Cloud Infrastructure & Storage Setup
-- **Branch**: `feature/milestone-1-infra`
-- **Scope**: Define and deploy GCS buckets, BigQuery datasets, Pub/Sub topics, and Firestore collections using Terraform.
-- **Verification**: Run `terraform apply` to verify successful resource creation in your target GCP project.
-
-### Milestone 2: Thin Ingestion Cloud Function
-- **Branch**: `feature/milestone-2-trigger`
-- **Scope**: Write the Cloud Function trigger to calculate file hashes, query Firestore for duplicates, and publish messages to Pub/Sub.
-- **Verification**: Upload mock files to GCS and verify the Pub/Sub topic receives the trigger message.
-
-### Milestone 3: Apache Beam & Distributed Dataflow Pipeline
-- **Branch**: `feature/milestone-3-dataflow`
-- **Scope**: Re-organize v1.0 validation and transformation rules into modular helper functions and write the Beam pipeline.
-- **Verification**: Execute the Beam job locally using the DirectRunner on sample datasets.
-
-### Milestone 4: BigQuery Loader & SQL Transforms
-- **Branch**: `feature/milestone-4-loader`
-- **Scope**: Implement the BigQuery Write Load Job engine and SQL merge scripts to transform Silver canonical tables into Gold dimension/fact tables.
-- **Verification**: Query BQ tables to verify data loading and key mapping consistency.
-
-### Milestone 5: End-to-End Testing & Observability
-- **Branch**: `feature/milestone-5-e2e`
-- **Scope**: Deploy Cloud Monitoring dashboards and verify the complete end-to-end event flow.
-- **Verification**: Upload `sales_1k.csv` to GCS raw bucket and verify ingestion into BigQuery gold tables.
 
 ---
 
-## 15. Future v3 Evolution
+## 15. Architecture Decision Records (ADR) Roadmap
+
+The following ADRs will be created under `docs/adr/` during the modernization implementation:
+- **`ADR-008`**: Storage Strategy (StorageProvider interface)
+- **`ADR-009`**: BigQuery Adoption (BigQuery as analytical warehouse)
+- **`ADR-010`**: Dataflow Execution Model (Apache Beam and Dataflow runner)
+- **`ADR-011`**: Warehouse Strategy (WarehouseClient interface)
+- **`ADR-012`**: Cloud Logging & Observability Design
+- **`ADR-013`**: Terraform Configuration Standards
+- **`ADR-014`**: Medallion Architecture (Bronze-Silver-Gold)
+- **`ADR-015`**: CI/CD Release Pipeline
+
+---
+
+## 16. Future v3 Evolution
 
 The following capabilities are deferred to v3:
-- **Real-Time Streaming**: Streaming POS transaction events using Apache Kafka and BigQuery Storage Write API streaming.
-- **Change Data Capture (CDC)**: Capture source database changes using Debezium and stream them directly to BigQuery.
-- **Dataform / dbt Integration**: Manage SQL transforms inside the Silver-to-Gold layer using Dataform or dbt.
-- **Orchestration Workflow**: Implement Apache Airflow/Cloud Composer to orchestrate complex dependencies.
+- **Real-Time Streaming**: Ingestion via Apache Kafka and BigQuery Storage Write API.
+- **Dataform / dbt Integration**: Manage SQL transforms inside the Silver-to-Gold layer using Dataform.
+- **Orchestration Workflow**: Implement Cloud Composer (Airflow) for complex scheduling.
 
 ---
 
-## 16. Final Recommendation & Review
+## 17. Final Baseline Review & Verification
 
 ### Principal Data Engineer Assessment
-- **Realism**: The revised architecture represents a standard modern enterprise GCP data platform.
+- **Realism**: The architecture represents a standard modern enterprise GCP data platform.
 - **Hiring Manager Appeal**: The design demonstrates a solid understanding of GCP data engineering principles, and aligns well with what is expected of a candidate with 1-2 years of experience.
 - **Simplicity Check**: The architecture is clean and avoids over-engineering by using serverless integrations instead of managing complex systems like Apache Airflow or Kubernetes.
+
+### Architecture Baseline Status
+We declare this document as **RetailFlow ETL v2.0 Architecture Baseline v1.0**. All future implementation milestones will align with this specification.
