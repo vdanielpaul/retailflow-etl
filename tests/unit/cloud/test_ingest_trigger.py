@@ -1,4 +1,4 @@
-# Unit test validations verifying the Ingest Cloud Function trigger scaffolding
+# Unit test validations verifying the Ingest Cloud Function trigger and Application Ingestion Service
 
 import base64
 import json
@@ -7,25 +7,30 @@ from retailflow.cloud.dependencies import IngestionDependencyContainer
 from retailflow.cloud.exceptions import InvalidEventError, DuplicateFileError
 from retailflow.cloud.handlers.event_handler import IngestEventHandler
 from retailflow.cloud.models.events import FileAcceptedEvent
-from retailflow.cloud.services.watermark_service import BaseWatermarkService
-from retailflow.cloud.services.publisher_service import BasePublisherService
+from retailflow.cloud.repositories.watermark_repository import WatermarkRepository
+from retailflow.cloud.services.event_publisher import EventPublisher
+from retailflow.cloud.repositories.models import WatermarkRecord, AuditRecord
 
 #-------------------------------------------------------------------------------
 # 1. Unit Test Mock Implementations (Isolated from production code)
 #-------------------------------------------------------------------------------
-class MockWatermarkService(BaseWatermarkService):
+class MockWatermarkRepository(WatermarkRepository):
     """Test mock implementation for watermark database checks."""
     def __init__(self, simulate_duplicate: bool = False) -> None:
         self.simulate_duplicate = simulate_duplicate
-        self.registered_hashes = []
+        self.registered_watermarks = []
+        self.registered_audits = []
 
-    def is_duplicate_hash(self, file_hash: str) -> bool:
+    def exists(self, file_hash: str) -> bool:
         return self.simulate_duplicate
 
-    def register_ingestion(self, file_hash: str, filename: str, run_id: str) -> None:
-        self.registered_hashes.append(file_hash)
+    def create_watermark(self, record: WatermarkRecord) -> None:
+        self.registered_watermarks.append(record)
 
-class MockPublisherService(BasePublisherService):
+    def record_audit(self, record: AuditRecord) -> None:
+        self.registered_audits.append(record)
+
+class MockEventPublisher(EventPublisher):
     """Test mock implementation for downstream event publishing."""
     def __init__(self) -> None:
         self.published_events = []
@@ -37,19 +42,19 @@ class MockPublisherService(BasePublisherService):
 # 2. Pytest Fixtures
 #-------------------------------------------------------------------------------
 @pytest.fixture
-def mock_watermark_service():
-    return MockWatermarkService(simulate_duplicate=False)
+def mock_watermark_repository():
+    return MockWatermarkRepository(simulate_duplicate=False)
 
 @pytest.fixture
-def mock_publisher_service():
-    return MockPublisherService()
+def mock_event_publisher():
+    return MockEventPublisher()
 
 @pytest.fixture
-def test_container(mock_watermark_service, mock_publisher_service):
-    """Initializes dependency container and injects mock services for test context."""
+def test_container(mock_watermark_repository, mock_event_publisher):
+    """Initializes dependency container and overrides concrete adapters with mock services."""
     container = IngestionDependencyContainer()
-    container.watermark_service = mock_watermark_service
-    container.publisher_service = mock_publisher_service
+    container.watermark_repository = mock_watermark_repository
+    container.event_publisher = mock_event_publisher
     return container
 
 @pytest.fixture
@@ -91,11 +96,17 @@ def test_handler_parses_valid_payload(test_container, mock_pubsub_message):
     assert result["run_id"].startswith("run-")
     assert result["file_hash"].startswith("hash-")
 
-    # Verify mock services were called
-    assert len(test_container.watermark_service.registered_hashes) == 1
-    assert len(test_container.publisher_service.published_events) == 1
+    # Verify mock repository audits & watermarks
+    assert len(test_container.watermark_repository.registered_watermarks) == 1
+    assert len(test_container.watermark_repository.registered_audits) == 2 # INGESTING, INGESTED success
+    assert test_container.watermark_repository.registered_audits[0].status == "INGESTING"
+    assert test_container.watermark_repository.registered_audits[1].status == "INGESTED"
+
+
+    # Verify mock publisher was called
+    assert len(test_container.event_publisher.published_events) == 1
     
-    published_event = test_container.publisher_service.published_events[0]
+    published_event = test_container.event_publisher.published_events[0]
     assert published_event.event_version == "1.0"
     assert published_event.event_type == "FILE_ACCEPTED"
     assert published_event.correlation_id == "corr-test-1234"
@@ -104,7 +115,6 @@ def test_handler_generates_correlation_id_if_missing(test_container, mock_pubsub
     """Verifies that a correlation_id is auto-generated if missing from Pub/Sub attributes."""
     handler = IngestEventHandler(test_container)
     message = mock_pubsub_message["message"]
-    # Strip correlation_id
     if "attributes" in message:
         del message["attributes"]
 
@@ -142,12 +152,13 @@ def test_handler_rejects_missing_schema_properties(test_container):
 
 def test_duplicate_file_throws_exception(test_container, mock_pubsub_message):
     """Verifies that watermark duplicates trigger DuplicateFileError and stop flow."""
-    # Force watermark service to simulate a duplicate hash match
-    test_container.watermark_service.simulate_duplicate = True
+    test_container.watermark_repository.simulate_duplicate = True
     handler = IngestEventHandler(test_container)
     
     with pytest.raises(DuplicateFileError, match="Duplicate file hash detected"):
         handler.handle_ingestion_message(mock_pubsub_message["message"])
 
-    # Verify no publish took place
-    assert len(test_container.publisher_service.published_events) == 0
+    # Verify no watermark created and no events published
+    assert len(test_container.watermark_repository.registered_watermarks) == 0
+    assert len(test_container.event_publisher.published_events) == 0
+    assert test_container.watermark_repository.registered_audits[-1].status == "REJECTED_DUPLICATE"

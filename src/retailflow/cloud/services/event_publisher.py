@@ -1,9 +1,9 @@
-# Downstream event publisher service abstractions
+# Downstream event publisher abstractions and adapters
 
 from abc import ABC, abstractmethod
 from retailflow.cloud.models.events import FileAcceptedEvent
 
-class BasePublisherService(ABC):
+class EventPublisher(ABC):
     """Abstract interface defining the publisher client contract."""
     
     @abstractmethod
@@ -15,7 +15,7 @@ class BasePublisherService(ABC):
         """
         pass
 
-class PubSubPublisherService(BasePublisherService):
+class PubSubEventPublisher(EventPublisher):
     """Production implementation of Pub/Sub event publisher."""
     
     def __init__(self, project_id: str, topic_name: str) -> None:
