@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -20,9 +21,9 @@ class FileValidator(BaseValidator):
     def validator_name(self) -> str:
         return "FileValidator"
 
-    def validate(self, df: pd.DataFrame, context: PipelineContext) -> ValidationResult:
+    def validate(self, df: pd.DataFrame, context: Optional[PipelineContext] = None) -> ValidationResult:
         start_time = time.perf_counter()
-        source_file = context.source_file
+        source_file = context.source_file if context is not None else None
         failed_count = 0
         summary: dict[str, int] = {}
         failed_indices: list[int] = []
@@ -69,7 +70,7 @@ class SchemaValidator(BaseValidator):
     def validator_name(self) -> str:
         return "SchemaValidator"
 
-    def validate(self, df: pd.DataFrame, context: PipelineContext) -> ValidationResult:
+    def validate(self, df: pd.DataFrame, context: Optional[PipelineContext] = None) -> ValidationResult:
         start_time = time.perf_counter()
         missing_cols = [col for col in self.required_columns if col not in df.columns]
 
@@ -99,7 +100,7 @@ class DataTypeValidator(BaseValidator):
     def validator_name(self) -> str:
         return "DataTypeValidator"
 
-    def validate(self, df: pd.DataFrame, context: PipelineContext) -> ValidationResult:
+    def validate(self, df: pd.DataFrame, context: Optional[PipelineContext] = None) -> ValidationResult:
         start_time = time.perf_counter()
         failed_indices: set[int] = set()
         summary: dict[str, int] = {}
@@ -162,7 +163,7 @@ class BusinessRuleValidator(BaseValidator):
     def validator_name(self) -> str:
         return "BusinessRuleValidator"
 
-    def validate(self, df: pd.DataFrame, context: PipelineContext) -> ValidationResult:
+    def validate(self, df: pd.DataFrame, context: Optional[PipelineContext] = None) -> ValidationResult:
         start_time = time.perf_counter()
         failed_indices: set[int] = set()
         summary: dict[str, int] = {}
@@ -229,7 +230,7 @@ class DuplicateValidator(BaseValidator):
     def validator_name(self) -> str:
         return "DuplicateValidator"
 
-    def validate(self, df: pd.DataFrame, context: PipelineContext) -> ValidationResult:
+    def validate(self, df: pd.DataFrame, context: Optional[PipelineContext] = None) -> ValidationResult:
         start_time = time.perf_counter()
         summary: dict[str, int] = {}
         failed_indices: list[int] = []

@@ -52,34 +52,52 @@ def test_pipeline_graph_assembly():
     options = PipelineOptions(args)
     custom_options = options.view_as(RetailFlowPipelineOptions)
     dependency_container = PipelineDependencyContainer("test-project", "test_metadata")
-    
+
     pipeline = beam.Pipeline(options=options)
-    build_pipeline(pipeline, custom_options, dependency_container)
-    
-    # Assert pipeline builds successfully without raising exceptions
+    verified_sales, invalid_records, malformed_rows = build_pipeline(pipeline, custom_options, dependency_container)
+
+    # Assert all three PCollections are produced
     assert pipeline is not None
+    assert verified_sales is not None
+    assert invalid_records is not None
+    assert malformed_rows is not None
+
 
 
 def test_local_direct_runner_execution():
-    """Verifies that the runner executes successfully on DirectRunner with local files."""
-    # Create temporary local mock data to act as input stream
+    """Verifies that build_pipeline() executes successfully on DirectRunner with local files.
+
+    Calls build_pipeline() directly (not run()) to avoid the GCS WriteToText
+    sinks wired in runner.py, which require a real GCS bucket. The test
+    exercises the full transform graph — read, parse, validate — and confirms
+    the pipeline completes in DONE state.
+    """
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".csv", delete=False) as temp_file:
+        # Write rows that will parse but fail canonical mapping (wrong column count)
+        # so the full graph exercises both valid_sales and malformed_rows paths.
         temp_file.write("transaction_id,store_id,amount\n")
         temp_file.write("tx-001,store-10,120.50\n")
-        temp_file.write("tx-002,store-12,45.00\n")
         temp_file.flush()
-        
+
         args = [
             "--input_file", temp_file.name,
             "--silver_dataset", "test_silver",
             "--metadata_dataset", "test_metadata",
             "--quarantine_bucket", "test-quarantine",
             "--correlation_id", "corr-local-test",
-            "--runner", "DirectRunner"
+            "--runner", "DirectRunner",
         ]
-        
-        # Execute the pipeline with parameters
-        result = run(args)
-        
-        # Verify the pipeline completed in DONE state
+
+        options = PipelineOptions(args)
+        custom_options = options.view_as(RetailFlowPipelineOptions)
+        deps = PipelineDependencyContainer("test-project", "test_metadata")
+
+        pipeline = beam.Pipeline(options=options)
+        verified_sales, invalid_records, malformed_rows = build_pipeline(
+            pipeline, custom_options, deps
+        )
+
+        result = pipeline.run()
+        result.wait_until_finish()
+
         assert str(result.state) == "DONE"

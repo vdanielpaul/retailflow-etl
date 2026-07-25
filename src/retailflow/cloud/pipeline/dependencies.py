@@ -1,8 +1,11 @@
 # Pipeline dependency wiring container for infrastructure components
 
+import uuid
 from typing import Optional
+
 from google.cloud import bigquery
 from retailflow.cloud.repositories.metadata_repository import MetadataRepository, BigQueryMetadataRepository
+
 
 class PipelineDependencyContainer:
     """Manages the lifecycle of database connections and metadata repositories for the pipeline runner."""
@@ -11,7 +14,8 @@ class PipelineDependencyContainer:
         self.project_id = project_id
         self.metadata_dataset = metadata_dataset
         self.environment = environment
-        
+        self.run_id = f"run-{uuid.uuid4().hex[:12]}"
+
         # Try to initialize the client, but handle missing credentials gracefully in offline test contexts
         try:
             self.bq_client = bigquery.Client(project=self.project_id)

@@ -60,12 +60,38 @@ def run(argv=None) -> Any:
 
     # 4. Construct and execute the Beam pipeline graph
     pipeline = beam.Pipeline(options=pipeline_options)
-    build_pipeline(pipeline, custom_options, dependency_container)
+    verified_sales, invalid_records, malformed_rows = build_pipeline(
+        pipeline, custom_options, dependency_container
+    )
 
-    # Execute execution graph blocks synchronously
+    # 5. Attach quarantine output sinks (runner controls I/O path resolution)
+    # invalid_records: already serialised to JSON strings by ValidateSaleRecordFn
+    # malformed_rows: raw dicts from csv_parser, serialised here before writing
+    quarantine_bucket = all_opts.get("quarantine_bucket", "")
+    correlation_id = all_opts.get("correlation_id", "unknown")
+
+    _ = (
+        invalid_records
+        | "Write Invalid Quarantine" >> beam.io.WriteToText(
+            f"gs://{quarantine_bucket}/invalid/{correlation_id}/invalid_records",
+            file_name_suffix=".jsonl",
+        )
+    )
+
+    import json as _json
+    _ = (
+        malformed_rows
+        | "Serialize Malformed" >> beam.Map(lambda r: _json.dumps(r, default=str))
+        | "Write Malformed Quarantine" >> beam.io.WriteToText(
+            f"gs://{quarantine_bucket}/malformed/{correlation_id}/malformed_rows",
+            file_name_suffix=".jsonl",
+        )
+    )
+
+    # Execute execution graph — blocks synchronously until complete
     result = pipeline.run()
     result.wait_until_finish()
-    
+
     logger.info("Runner entrypoint execution finished.")
     return result
 
