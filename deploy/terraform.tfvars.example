@@ -1,0 +1,6 @@
+# Example override settings for local environment runs
+# Copy this file to terraform.tfvars or dev.tfvars to test local plans
+
+project_id  = "retailflow-dev-project"
+region      = "us-central1"
+environment = "dev"

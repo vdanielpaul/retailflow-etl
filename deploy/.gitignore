@@ -1,0 +1,18 @@
+# Local terraform state directories and files
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+
+# Override tfvars variables (except environment templates)
+*.tfvars
+!environments/*.tfvars
+terraform.tfvars
+terraform.tfvars.json
+
+# Log files
+*.log
+crash.log
+
+# Ignore local plugins / lock file only if we override local builds (otherwise we commit .terraform.lock.hcl)
+# .terraform.lock.hcl
