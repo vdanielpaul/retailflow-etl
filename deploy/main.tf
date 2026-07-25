@@ -46,9 +46,9 @@ data "google_storage_project_service_account" "gcs_account" {
   project = var.project_id
 }
 
-# Authorize GCS Service Account to publish event messages to our trigger topic
+# Authorize GCS Service Account to publish raw ingest event messages to our raw ingestion topic
 resource "google_pubsub_topic_iam_member" "gcs_publisher" {
-  topic   = module.pubsub.topic_name
+  topic   = module.pubsub.ingestion_events_topic_name
   role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}"
   project = var.project_id
@@ -58,7 +58,7 @@ resource "google_pubsub_topic_iam_member" "gcs_publisher" {
 resource "google_storage_notification" "raw_upload_notification" {
   bucket         = module.storage.raw_bucket_name
   payload_format = "JSON_API_V1"
-  topic          = module.pubsub.topic_id
+  topic          = module.pubsub.ingestion_events_topic_id
   event_types    = ["OBJECT_FINALIZE"]
 
   # Explicit dependency guarantees IAM permissions exist before notification registration is attempted by GCS

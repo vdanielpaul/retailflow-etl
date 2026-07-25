@@ -61,22 +61,32 @@ output "metadata_dataset_id" {
   description = "The ID of the Metadata audit dataset."
 }
 
-output "pubsub_topic_name" {
-  value       = module.pubsub.topic_name
-  description = "The name of the GCS ingest trigger Pub/Sub topic."
+output "ingestion_events_topic_name" {
+  value       = module.pubsub.ingestion_events_topic_name
+  description = "The name of the GCS raw ingestion events topic."
 }
 
-output "pubsub_topic_id" {
-  value       = module.pubsub.topic_id
-  description = "The ID of the GCS ingest trigger Pub/Sub topic."
+output "ingestion_events_topic_id" {
+  value       = module.pubsub.ingestion_events_topic_id
+  description = "The ID of the GCS raw ingestion events topic."
 }
 
-output "pubsub_subscription_name" {
-  value       = module.pubsub.subscription_name
-  description = "The name of the Pub/Sub pull subscription."
+output "processing_events_topic_name" {
+  value       = module.pubsub.processing_events_topic_name
+  description = "The name of the validated processing events topic."
 }
 
-output "pubsub_subscription_id" {
-  value       = module.pubsub.subscription_id
-  description = "The ID of the Pub/Sub pull subscription."
+output "processing_events_topic_id" {
+  value       = module.pubsub.processing_events_topic_id
+  description = "The ID of the validated processing events topic."
+}
+
+output "processing_events_subscription_name" {
+  value       = module.pubsub.processing_events_subscription_name
+  description = "The name of the processing events pull subscription."
+}
+
+output "processing_events_subscription_id" {
+  value       = module.pubsub.processing_events_subscription_id
+  description = "The ID of the processing events pull subscription."
 }

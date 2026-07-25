@@ -1,0 +1,1 @@
+# Cloud Function config module.

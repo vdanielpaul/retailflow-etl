@@ -1,0 +1,1 @@
+# Cloud Function logging module.
